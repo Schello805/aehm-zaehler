@@ -138,3 +138,11 @@ Dieses Projekt steht unter der MIT-Lizenz. Siehe [LICENSE](LICENSE).
 ## Hinweis
 
 Das Projekt wurde bewusst als lokal nutzbares Open-Source-Tool entwickelt. Der Standardbetrieb benötigt keine externe API-Konfiguration. Für die besten Ergebnisse empfiehlt sich eine gute Sprachaufnahme mit sauberem Audio und möglichst wenig Hintergrundrauschen.
+
+HOME
+<img width="1464" height="764" alt="Screenshot ähzähler home" src="https://github.com/user-attachments/assets/1b11d1ad-2cd8-486b-a2f5-a3e8d1aa0d07" />
+
+Settings
+<img width="1525" height="708" alt="Screenshot ähzähler settings" src="https://github.com/user-attachments/assets/d5dd25d7-aee3-4a4d-aebb-9a435032f961" />
+
+
