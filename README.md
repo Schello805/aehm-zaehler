@@ -145,4 +145,8 @@ HOME
 Settings
 <img width="1525" height="708" alt="Screenshot ähzähler settings" src="https://github.com/user-attachments/assets/d5dd25d7-aee3-4a4d-aebb-9a435032f961" />
 
+Analyse
+<img width="704" height="667" alt="Analyse" src="https://github.com/user-attachments/assets/862820f2-9349-46a9-93f3-fb2df442c0dc" />
 
+Ergebnis
+<img width="677" height="777" alt="Screenshot Ergebnis" src="https://github.com/user-attachments/assets/d0390779-349a-40b3-897d-c383e301faca" />
