@@ -258,7 +258,7 @@ app.post('/api/clean-audio', upload.single('file'), async (request, response) =>
 const distDirectory = join(projectRoot, 'dist')
 if (existsSync(distDirectory)) {
   app.use(express.static(distDirectory))
-  app.get('*', (request, response, next) => {
+  app.use((request, response, next) => {
     if (request.path.startsWith('/api')) return next()
     response.sendFile(join(distDirectory, 'index.html'))
   })
