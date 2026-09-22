@@ -994,6 +994,9 @@ function LiveStudio({ words }: { words: string[] }) {
   const [speechPace, setSpeechPace] = useState(0)
   const recognitionRef = useRef<any>(null)
   const timerRef = useRef<number | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const animFrameRef = useRef<number | null>(null)
 
   useEffect(() => {
     if (!isListening) {
@@ -1010,7 +1013,89 @@ function LiveStudio({ words }: { words: string[] }) {
     }
   }, [isListening])
 
-  const startListening = () => {
+  const startVisualizer = async (stream: MediaStream) => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
+      const audioCtx = new AudioCtx()
+      const analyser = audioCtx.createAnalyser()
+      analyser.fftSize = 128
+
+      const source = audioCtx.createMediaStreamSource(stream)
+      source.connect(analyser)
+
+      audioContextRef.current = audioCtx
+
+      const bufferLength = analyser.frequencyBinCount
+      const freqData = new Uint8Array(bufferLength)
+      const timeData = new Uint8Array(bufferLength)
+
+      const draw = () => {
+        animFrameRef.current = requestAnimationFrame(draw)
+        analyser.getByteFrequencyData(freqData)
+        analyser.getByteTimeDomainData(timeData)
+
+        const canvas = canvasRef.current
+        if (!canvas) return
+        const ctx = canvas.getContext('2d')
+        if (!ctx) return
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+        // 1. Draw background frequency volume bars
+        const barWidth = canvas.width / bufferLength
+        let x = 0
+        let maxVol = 0
+
+        for (let i = 0; i < bufferLength; i++) {
+          const v = freqData[i]
+          if (v > maxVol) maxVol = v
+          const barHeight = (v / 255) * canvas.height * 0.75
+          ctx.fillStyle = `rgba(243, 125, 33, ${Math.max(0.12, v / 300)})`
+          ctx.fillRect(x, canvas.height - barHeight, barWidth - 1, barHeight)
+          x += barWidth
+        }
+
+        // 2. Draw real-time oscilloscope waveform line over voice audio
+        ctx.lineWidth = 2.5
+        const isSpeaking = maxVol > 25
+        ctx.strokeStyle = isSpeaking ? '#00e676' : '#ff9800'
+        ctx.shadowColor = isSpeaking ? '#00e676' : 'rgba(255, 152, 0, 0.4)'
+        ctx.shadowBlur = isSpeaking ? 10 : 4
+        ctx.beginPath()
+
+        const sliceWidth = canvas.width / bufferLength
+        let waveX = 0
+
+        for (let i = 0; i < bufferLength; i++) {
+          const v = timeData[i] / 128.0
+          const y = (v * canvas.height) / 2
+
+          if (i === 0) {
+            ctx.moveTo(waveX, y)
+          } else {
+            ctx.lineTo(waveX, y)
+          }
+          waveX += sliceWidth
+        }
+
+        ctx.lineTo(canvas.width, canvas.height / 2)
+        ctx.stroke()
+        ctx.shadowBlur = 0
+      }
+      draw()
+    } catch (err) {
+      console.error('Audio visualizer error:', err)
+    }
+  }
+
+  const stopVisualizer = () => {
+    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current)
+    if (audioContextRef.current) void audioContextRef.current.close()
+    audioContextRef.current = null
+    animFrameRef.current = null
+  }
+
+  const startListening = async () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
     if (!SpeechRecognition) {
       alert('Dein Browser unterstützt keine Echtzeit-Spracherkennung. Bitte nutze Google Chrome oder MS Edge für das Live Studio.')
@@ -1018,6 +1103,9 @@ function LiveStudio({ words }: { words: string[] }) {
     }
 
     try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      void startVisualizer(stream)
+
       const recognition = new SpeechRecognition()
       recognition.continuous = true
       recognition.interimResults = true
@@ -1081,7 +1169,7 @@ function LiveStudio({ words }: { words: string[] }) {
       setIsListening(true)
       setLastAlert('Live-Erkennung aktiv. Sprich frei ins Mikrofon!')
     } catch (e) {
-      console.error(e)
+      console.error('Konnte Mikrofon nicht starten:', e)
     }
   }
 
@@ -1090,6 +1178,7 @@ function LiveStudio({ words }: { words: string[] }) {
       recognitionRef.current.stop()
       recognitionRef.current = null
     }
+    stopVisualizer()
     setIsListening(false)
   }
 
@@ -1105,72 +1194,90 @@ function LiveStudio({ words }: { words: string[] }) {
 
   return (
     <section className="live-studio-view">
-      <p className="eyebrow">ECHTZEIT-SPRECHFLUSS-TRAINER</p>
-      <h1>🔴 Live Studio<br /><em>Präsentation live üben.</em></h1>
-      <p className="intro-copy">Sprich frei ins Mikrofon. Der Ähm-Zähler erfasst Füllwörter in Echtzeit und gibt dir sofortiges Feedback.</p>
-
-      <div className="live-studio-panel">
-        <div className="live-counter-box">
-          <img src="/logo.png" alt="ähzähler Logo" className="live-logo-badge" />
-          <div className="flip-counter-display">
-            <span className="flip-counter-number">{String(liveCount).padStart(2, '0')}</span>
-          </div>
-          <div className="live-status-indicator">
-            <span className={isListening ? 'live-mic-dot recording' : 'live-mic-dot'} />
-            <span>{isListening ? 'Mikrofon aktiv & Live-Analyse läuft' : 'Mikrofon bereit'}</span>
-          </div>
+      <div className="live-studio-header">
+        <div className="live-studio-header-titles">
+          <span className="eyebrow">ECHTZEIT-SPRECHFLUSS-TRAINER</span>
+          <h1>🔴 Live Studio — <em>Präsentation live üben</em></h1>
+          <p className="intro-copy">Sprich frei ins Mikrofon. Füllwörter werden live gezählt & dein Tonwellensignal (Audio-Wave) visualisiert.</p>
         </div>
-
-        {lastAlert && (
-          <div className="live-alert-banner">
-            <span>⚠️</span>
-            <span>{lastAlert}</span>
-          </div>
-        )}
-
-        <div className="live-controls">
-          {!isListening ? (
-            <button type="button" className="live-start-button" onClick={startListening}>
-              <span>🎙️ Live-Session starten</span>
-            </button>
-          ) : (
-            <button type="button" className="live-stop-button" onClick={stopListening}>
-              <span>⏸️ Pause</span>
-            </button>
-          )}
-          <button type="button" className="history-clear-button" onClick={resetLiveSession}>
-            Zurücksetzen
-          </button>
+        <div className="live-header-status-badge">
+          <span className={isListening ? 'live-mic-dot recording' : 'live-mic-dot'} />
+          <b>{isListening ? 'LIVE-ERKENNUNG AKTIV' : 'BEREIT'}</b>
         </div>
+      </div>
 
-        <div className="live-stats-grid">
-          <div className="live-stat-card">
-            <b>Dauer</b>
-            <strong>{formatTimestamp(elapsedSeconds)} min</strong>
-          </div>
-          <div className="live-stat-card">
-            <b>Füllwörter gesamt</b>
-            <strong>{liveCount}</strong>
-          </div>
-          <div className="live-stat-card">
-            <b>Sprechtempo (WPM)</b>
-            <strong>{speechPace} <span>Wörter/min</span></strong>
-          </div>
-        </div>
-
-        <div className="breakdown" style={{ marginTop: '20px' }}>
-          {words.map((word) => (
-            <div key={word}>
-              <b>„{word}“</b>
-              <strong>{wordCounts[word] || 0}</strong>
-              <span>Treffer</span>
+      <div className="live-studio-grid">
+        <div className="live-studio-panel left-panel">
+          <div className="live-counter-box">
+            <img src="/logo.png" alt="ähzähler Logo" className="live-logo-badge" />
+            <div className="flip-counter-display">
+              <span className="flip-counter-number">{String(liveCount).padStart(2, '0')}</span>
             </div>
-          ))}
+
+            <div className="audio-visualizer-box" title="Echtzeit-Audio-Waveform deines Mikrofons">
+              <div className="wave-label"><span>WAVE-SIGNAL DEINER STIMME</span></div>
+              <canvas ref={canvasRef} width={280} height={52} className="audio-visualizer-canvas" />
+            </div>
+
+            <div className="live-status-indicator">
+              <span className={isListening ? 'live-mic-dot recording' : 'live-mic-dot'} />
+              <span>{isListening ? 'Mikrofon aktiv · Stimmsignal wird verarbeitet' : 'Mikrofon im Standby'}</span>
+            </div>
+          </div>
+
+          <div className="live-controls">
+            {!isListening ? (
+              <button type="button" className="live-start-button" onClick={startListening}>
+                <span>🎙️ Live-Session starten</span>
+              </button>
+            ) : (
+              <button type="button" className="live-stop-button" onClick={stopListening}>
+                <span>⏸️ Pause</span>
+              </button>
+            )}
+            <button type="button" className="history-clear-button" onClick={resetLiveSession}>
+              Zurücksetzen
+            </button>
+          </div>
         </div>
 
-        <div className="live-transcript-box">
-          <div className="section-label">Live Transkript-Stream</div>
-          <p>{liveTranscript || 'Noch keine Sprache erfasst. Klicke auf „Live-Session starten“ und sprich ins Mikrofon.'}</p>
+        <div className="live-studio-panel right-panel">
+          {lastAlert && (
+            <div className="live-alert-banner">
+              <span>⚠️</span>
+              <span>{lastAlert}</span>
+            </div>
+          )}
+
+          <div className="live-stats-grid">
+            <div className="live-stat-card">
+              <b>Dauer</b>
+              <strong>{formatTimestamp(elapsedSeconds)} min</strong>
+            </div>
+            <div className="live-stat-card">
+              <b>Füllwörter gesamt</b>
+              <strong>{liveCount}</strong>
+            </div>
+            <div className="live-stat-card">
+              <b>Sprechtempo</b>
+              <strong>{speechPace} <span style={{ fontSize: '13px', fontWeight: 400 }}>WPM</span></strong>
+            </div>
+          </div>
+
+          <div className="breakdown" style={{ marginTop: '14px' }}>
+            {words.map((word) => (
+              <div key={word}>
+                <b>„{word}“</b>
+                <strong>{wordCounts[word] || 0}</strong>
+                <span>Treffer</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="live-transcript-box">
+            <div className="section-label">Live Transkript-Stream</div>
+            <p>{liveTranscript || 'Noch keine Sprache erfasst. Klicke auf „Live-Session starten“ und sprich ins Mikrofon.'}</p>
+          </div>
         </div>
       </div>
     </section>
