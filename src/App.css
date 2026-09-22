@@ -1771,3 +1771,254 @@ footer {
   .add-word button { height: 45px; }
   footer { font-size: 9px; }
 }
+
+/* ============================================================
+   🌙 DARK MODE
+   ============================================================ */
+:root[data-theme="dark"] {
+  --bg: #13120f;
+  --panel: rgba(30, 28, 24, 0.85);
+  --line: #2e2c28;
+  --ink: #f0ece3;
+  --muted: #9a9287;
+  --red: #e06b55;
+  --red-soft: #3a1f1a;
+  --green: #3a9970;
+}
+
+html { transition: background 0.35s ease, color 0.35s ease; }
+body { transition: background 0.35s ease, color 0.35s ease; }
+
+.dark-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  font-size: 15px;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.15s;
+}
+.dark-toggle:hover {
+  background: var(--red-soft);
+  transform: scale(1.12) rotate(-15deg);
+}
+
+/* ============================================================
+   ☁️ WORD CLOUD
+   ============================================================ */
+.word-cloud-card {
+  margin-top: 18px;
+  padding: 18px 20px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.word-cloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  align-items: baseline;
+  padding-top: 12px;
+  min-height: 60px;
+}
+
+.word-cloud-bubble {
+  display: inline-block;
+  font-weight: 700;
+  font-family: 'Outfit', sans-serif;
+  line-height: 1.1;
+  cursor: default;
+  transition: transform 0.18s, opacity 0.18s;
+  padding: 3px 6px;
+  border-radius: 6px;
+  opacity: 0.9;
+}
+
+.word-cloud-bubble:hover {
+  transform: scale(1.15);
+  opacity: 1;
+}
+
+.word-cloud-bubble sup {
+  font-size: 0.55em;
+  font-weight: 400;
+  margin-left: 2px;
+  opacity: 0.8;
+}
+
+.word-cloud-bubble.wc-hot {
+  color: #c75b47;
+  background: rgba(199, 91, 71, 0.12);
+}
+
+.word-cloud-bubble.wc-warm {
+  color: #c47e1a;
+  background: rgba(196, 126, 26, 0.12);
+}
+
+.word-cloud-bubble.wc-cool {
+  color: #2872b8;
+  background: rgba(40, 114, 184, 0.12);
+}
+
+:root[data-theme="dark"] .word-cloud-bubble.wc-hot { color: #e07060; background: rgba(224, 112, 96, 0.15); }
+:root[data-theme="dark"] .word-cloud-bubble.wc-warm { color: #e0a040; background: rgba(224, 160, 64, 0.15); }
+:root[data-theme="dark"] .word-cloud-bubble.wc-cool { color: #5898e0; background: rgba(88, 152, 224, 0.15); }
+
+/* ============================================================
+   🗺️ HEATMAP TIMELINE
+   ============================================================ */
+.heatmap-card {
+  margin-top: 18px;
+  padding: 18px 20px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.heatmap-strip {
+  display: flex;
+  height: 48px;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-top: 12px;
+  cursor: pointer;
+  gap: 1px;
+}
+
+.heatmap-cell {
+  flex: 1;
+  min-width: 2px;
+  border-radius: 2px;
+  transition: filter 0.15s, transform 0.12s;
+  transform-origin: bottom;
+}
+
+.heatmap-cell:hover {
+  filter: brightness(1.3);
+  transform: scaleY(1.1);
+  z-index: 1;
+}
+
+.heatmap-legend {
+  display: flex;
+  gap: 18px;
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+
+.heatmap-legend span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.heatmap-legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+/* ============================================================
+   🎰 FLIP COUNTER ANIMATION
+   ============================================================ */
+@keyframes counter-flip {
+  0%   { transform: perspective(300px) rotateX(0deg);   color: var(--ink); }
+  25%  { transform: perspective(300px) rotateX(-50deg); color: var(--red); }
+  50%  { transform: perspective(300px) rotateX(-90deg); opacity: 0; }
+  51%  { transform: perspective(300px) rotateX(90deg);  opacity: 0; }
+  75%  { transform: perspective(300px) rotateX(30deg);  color: var(--red); }
+  100% { transform: perspective(300px) rotateX(0deg);   color: var(--ink); }
+}
+
+.flip-counter-number.counter-pop {
+  animation: counter-flip 0.55s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ============================================================
+   💥 PARTICLE CANVAS
+   ============================================================ */
+.particle-canvas-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.particle-canvas {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* ============================================================
+   🔴 AMBIENT GLOW / ALERT
+   ============================================================ */
+@keyframes ambient-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(199, 91, 71, 0.55); }
+  50%  { box-shadow: 0 0 0 18px rgba(199, 91, 71, 0.0); }
+  100% { box-shadow: 0 0 0 0 rgba(199, 91, 71, 0); }
+}
+
+.live-counter-box.ambient-alert {
+  animation: ambient-pulse 1.2s ease-out infinite;
+  border-color: var(--red) !important;
+  background: rgba(199, 91, 71, 0.07);
+}
+
+/* ============================================================
+   📈 WPM CHART
+   ============================================================ */
+.wpm-chart-box {
+  margin-top: 14px;
+  padding: 14px 16px;
+  background: rgba(0, 0, 0, 0.12);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  position: relative;
+}
+
+:root[data-theme="dark"] .wpm-chart-box {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.wpm-chart-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.wpm-chart-canvas {
+  width: 100%;
+  height: 80px;
+  border-radius: 8px;
+  display: block;
+}
+
+.wpm-chart-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: var(--muted);
+  pointer-events: none;
+  opacity: 0.7;
+}
+

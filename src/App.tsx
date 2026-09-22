@@ -61,16 +61,6 @@ const getProgressLabel = (percent: number) => {
 
 const formatTimestamp = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`
 
-const getMinuteBuckets = (result: Result) => {
-  const bucketCount = Math.max(1, Math.ceil(result.duration / 60))
-  const segments = result.segments || []
-  return Array.from({ length: bucketCount }, (_, index) => {
-    const fillerWords = segments
-      .filter((segment) => Math.floor(segment.start / 60) === index)
-      .reduce((sum, segment) => sum + Object.values(segment.counts).reduce((segmentSum, count) => segmentSum + count, 0), 0)
-    return { minute: index + 1, fillerWords }
-  })
-}
 
 const getOptimizationAdvice = (result: Result) => {
   const effectiveFillerWords = result.baseFillerWords ?? result.fillerWords
@@ -117,6 +107,7 @@ const getOptimizationAdvice = (result: Result) => {
 
 function App() {
   const [view, setView] = useState<'analyse' | 'live' | 'settings'>('analyse')
+  const [darkMode, setDarkMode] = useState<boolean>(() => localStorage.getItem('dark-mode') === 'true')
   const [words, setWords] = useState<string[]>(() => {
     try {
       const stored = JSON.parse(localStorage.getItem('fill-words') || 'null')
@@ -248,6 +239,11 @@ function App() {
   useEffect(() => {
     localStorage.setItem('analysis-history', JSON.stringify(history))
   }, [history])
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light')
+    localStorage.setItem('dark-mode', String(darkMode))
+  }, [darkMode])
 
   useEffect(() => {
     if (!file && !url) {
@@ -460,6 +456,15 @@ function App() {
           <button className={view === 'analyse' ? 'nav-link active' : 'nav-link'} onClick={() => setView('analyse')} type="button">Analyse</button>
           <button className={view === 'live' ? 'nav-link active' : 'nav-link'} onClick={() => setView('live')} type="button">🔴 Live Studio</button>
           <button className={view === 'settings' ? 'nav-link active' : 'nav-link'} onClick={() => setView('settings')} type="button">Settings</button>
+          <button
+            type="button"
+            className="dark-toggle"
+            onClick={() => setDarkMode(!darkMode)}
+            title={darkMode ? 'Light Mode' : 'Dark Mode'}
+            aria-label="Dark Mode umschalten"
+          >
+            {darkMode ? '☀️' : '🌙'}
+          </button>
           <span className="nav-status"><i /> Analyse-Studio</span>
         </div>
       </nav>
@@ -645,37 +650,93 @@ function App() {
                   <div className="breakdown">
                     {words.slice(0, 3).map((word) => (
                       <div key={word}>
-                        <b>„{word}“</b>
+                        <b>„{word}"</b>
                         <strong>{result.counts[word] || 0}</strong>
                         <span>Treffer</span>
                       </div>
                     ))}
                   </div>
 
+                  {/* Word Cloud */}
                   {(() => {
-                    const minuteBuckets = getMinuteBuckets(result)
-                    const maxMinuteCount = Math.max(1, ...minuteBuckets.map((b) => b.fillerWords))
+                    const allCounts = Object.entries(result.counts).filter(([, c]) => c > 0)
+                    if (!allCounts.length) return null
+                    const maxCount = Math.max(...allCounts.map(([, c]) => c))
                     return (
-                      <div className="density-card">
-                        <div className="section-label">Füllwörter pro Minute</div>
-                        <div className="density-chart" aria-label="Füllwörter pro Minute">
-                          {minuteBuckets.map((bucket) => (
-                            <div className="density-column" key={bucket.minute} title={`${bucket.minute}. Minute: ${bucket.fillerWords} Füllwörter`}>
+                      <div className="word-cloud-card">
+                        <div className="section-label">☁️ Wort-Wolke</div>
+                        <div className="word-cloud">
+                          {allCounts
+                            .sort(([, a], [, b]) => b - a)
+                            .map(([word, count]) => {
+                              const ratio = count / maxCount
+                              const size = Math.round(13 + ratio * 26)
+                              const colorClass = ratio > 0.7 ? 'wc-hot' : ratio > 0.35 ? 'wc-warm' : 'wc-cool'
+                              return (
+                                <span
+                                  key={word}
+                                  className={`word-cloud-bubble ${colorClass}`}
+                                  style={{ fontSize: `${size}px` }}
+                                  title={`„${word}": ${count}×`}
+                                >
+                                  {word}<sup>{count}</sup>
+                                </span>
+                              )
+                            })}
+                        </div>
+                      </div>
+                    )
+                  })()}
+
+                  {/* Heatmap Timeline */}
+                  {(() => {
+                    if (!result.segments || !result.duration) return null
+                    const BUCKETS = Math.min(200, Math.max(20, Math.round(result.duration)))
+                    const bucketDuration = result.duration / BUCKETS
+                    const buckets = Array.from({ length: BUCKETS }, (_, i) => {
+                      const t0 = i * bucketDuration
+                      const t1 = t0 + bucketDuration
+                      const count = result.segments
+                        .filter((s) => s.start >= t0 && s.start < t1)
+                        .reduce((sum, s) => sum + Object.values(s.counts ?? {}).reduce((a, b) => a + b, 0), 0)
+                      return { t0, count }
+                    })
+                    const maxBucket = Math.max(1, ...buckets.map((b) => b.count))
+                    return (
+                      <div className="heatmap-card">
+                        <div className="section-label">🗺️ Heatmap-Timeline — Füllwörter über Zeit</div>
+                        <div className="heatmap-strip" aria-label="Füllwort-Heatmap">
+                          {buckets.map((bucket, i) => {
+                            const intensity = bucket.count / maxBucket
+                            const hue = Math.round(120 - intensity * 120)
+                            const sat = bucket.count === 0 ? 15 : 80
+                            const light = 42 + (1 - intensity) * 22
+                            return (
                               <div
-                                className="density-bar"
-                                style={{
-                                  height: `${bucket.fillerWords === 0 ? 8 : Math.max(12, Math.min(100, Math.round((bucket.fillerWords / maxMinuteCount) * 100)))}%`,
+                                key={i}
+                                className="heatmap-cell"
+                                style={{ background: `hsl(${hue}, ${sat}%, ${light}%)` }}
+                                title={`${formatTimestamp(bucket.t0)} — ${bucket.count} Füllwort${bucket.count !== 1 ? 'er' : ''}`}
+                                onClick={() => {
+                                  if (!playbackRef.current) return
+                                  playbackRef.current.currentTime = bucket.t0
+                                  void playbackRef.current.play()
                                 }}
                               />
-                              <span>{bucket.minute}</span>
-                            </div>
-                          ))}
+                            )
+                          })}
+                        </div>
+                        <div className="heatmap-legend">
+                          <span><span className="heatmap-legend-dot" style={{ background: 'hsl(120, 80%, 42%)' }} />Kein Füllwort</span>
+                          <span><span className="heatmap-legend-dot" style={{ background: 'hsl(60, 80%, 42%)' }} />Wenige</span>
+                          <span><span className="heatmap-legend-dot" style={{ background: 'hsl(0, 80%, 42%)' }} />Viele</span>
                         </div>
                       </div>
                     )
                   })()}
 
                   <div className="waveform-bar-card">
+
                     <div className="section-label">Interaktive Füllwort-Timeline & Player</div>
                     <div
                       className="waveform-timeline"
@@ -992,11 +1053,136 @@ function LiveStudio({ words }: { words: string[] }) {
   const [lastAlert, setLastAlert] = useState<string | null>(null)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const [speechPace, setSpeechPace] = useState(0)
+  const [wpmHistory, setWpmHistory] = useState<number[]>([])
+  const [isAmbientAlert, setIsAmbientAlert] = useState(false)
   const recognitionRef = useRef<any>(null)
   const timerRef = useRef<number | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const wpmCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const particleCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
   const animFrameRef = useRef<number | null>(null)
+  const particlesRef = useRef<Array<{ x: number; y: number; vx: number; vy: number; alpha: number; color: string }>>([])
+  const particleAnimRef = useRef<number | null>(null)
+  const counterRef = useRef<HTMLSpanElement | null>(null)
+
+  // Track whether counter popped this cycle
+  const popCounterAnimation = () => {
+    const el = counterRef.current
+    if (!el) return
+    el.classList.remove('counter-pop')
+    void el.offsetWidth // reflow to restart
+    el.classList.add('counter-pop')
+  }
+
+  // Spawn particles on filler word detection
+  const spawnParticles = () => {
+    const canvas = particleCanvasRef.current
+    if (!canvas) return
+    const cx = canvas.width / 2
+    const cy = canvas.height / 2
+    const colors = ['#f37d21', '#ef4444', '#ffb800', '#ff6b6b', '#fbbf24']
+    for (let i = 0; i < 18; i++) {
+      const angle = Math.random() * Math.PI * 2
+      const speed = 2 + Math.random() * 4
+      particlesRef.current.push({
+        x: cx, y: cy,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 2,
+        alpha: 1,
+        color: colors[Math.floor(Math.random() * colors.length)],
+      })
+    }
+    if (!particleAnimRef.current) animateParticles()
+  }
+
+  const animateParticles = () => {
+    const canvas = particleCanvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    particlesRef.current = particlesRef.current.filter((p) => p.alpha > 0.02)
+    for (const p of particlesRef.current) {
+      p.x += p.vx; p.y += p.vy
+      p.vy += 0.15 // gravity
+      p.alpha -= 0.022
+      ctx.save()
+      ctx.globalAlpha = Math.max(0, p.alpha)
+      ctx.fillStyle = p.color
+      ctx.beginPath()
+      ctx.arc(p.x, p.y, 4, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.restore()
+    }
+    if (particlesRef.current.length > 0) {
+      particleAnimRef.current = requestAnimationFrame(animateParticles)
+    } else {
+      particleAnimRef.current = null
+    }
+  }
+
+  // Draw rolling WPM chart
+  useEffect(() => {
+    const canvas = wpmCanvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    const W = canvas.width
+    const H = canvas.height
+    ctx.clearRect(0, 0, W, H)
+
+    // Background
+    ctx.fillStyle = 'rgba(0,0,0,0.1)'
+    ctx.fillRect(0, 0, W, H)
+
+    if (wpmHistory.length < 2) return
+
+    const maxWpm = Math.max(240, ...wpmHistory)
+    const RECOMMEND = 120
+    const FAST = 180
+
+    // Reference lines
+    const drawRefLine = (wpm: number, color: string, label: string) => {
+      const y = H - (wpm / maxWpm) * H
+      ctx.strokeStyle = color
+      ctx.lineWidth = 1
+      ctx.setLineDash([4, 4])
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke()
+      ctx.setLineDash([])
+      ctx.fillStyle = color
+      ctx.font = '10px system-ui'
+      ctx.fillText(label, 4, y - 3)
+    }
+    drawRefLine(RECOMMEND, 'rgba(0,230,118,0.7)', `${RECOMMEND} WPM`)
+    drawRefLine(FAST, 'rgba(255,107,107,0.7)', `${FAST} WPM`)
+
+    // WPM line
+    const lastWpm = wpmHistory[wpmHistory.length - 1]
+    const gradient = ctx.createLinearGradient(0, 0, 0, H)
+    gradient.addColorStop(0, lastWpm > FAST ? '#ff6b6b' : '#00e676')
+    gradient.addColorStop(1, 'rgba(0,230,118,0.1)')
+    ctx.strokeStyle = lastWpm > FAST ? '#ff6b6b' : '#00e676'
+    ctx.lineWidth = 2.5
+    ctx.shadowColor = lastWpm > FAST ? '#ff6b6b' : '#00e676'
+    ctx.shadowBlur = 8
+    ctx.beginPath()
+    const step = W / (wpmHistory.length - 1)
+    wpmHistory.forEach((wpm, i) => {
+      const x = i * step
+      const y = H - (wpm / maxWpm) * H
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
+    })
+    ctx.stroke()
+    ctx.shadowBlur = 0
+  }, [wpmHistory])
+
+  // Ambient alert: >5 fillers per minute rate
+  useEffect(() => {
+    if (!isListening || elapsedSeconds < 10) return
+    const perMin = (liveCount / elapsedSeconds) * 60
+    setIsAmbientAlert(perMin > 5)
+  }, [liveCount, elapsedSeconds, isListening])
 
   useEffect(() => {
     if (!isListening) {
@@ -1007,6 +1193,7 @@ function LiveStudio({ words }: { words: string[] }) {
     timerRef.current = window.setInterval(() => {
       setElapsedSeconds((sec) => sec + 1)
     }, 1000)
+
 
     return () => {
       if (timerRef.current) window.clearInterval(timerRef.current)
@@ -1125,6 +1312,10 @@ function LiveStudio({ words }: { words: string[] }) {
         if (tokens.length > 0 && elapsedSeconds > 0) {
           const wpm = Math.round((tokens.length / elapsedSeconds) * 60)
           setSpeechPace(wpm)
+          setWpmHistory((prev) => {
+            const next = [...prev, wpm]
+            return next.length > 60 ? next.slice(-60) : next
+          })
         }
 
         let totalFiller = 0
@@ -1145,12 +1336,18 @@ function LiveStudio({ words }: { words: string[] }) {
           }
         }
 
-        setLiveCount(totalFiller)
+        setLiveCount((prev) => {
+          if (totalFiller > prev) {
+            popCounterAnimation()
+            spawnParticles()
+          }
+          return totalFiller
+        })
         setWordCounts(counts)
 
         const lastWordMatched = words.find((w) => (counts[w] || 0) > (wordCounts[w] || 0))
         if (lastWordMatched) {
-          setLastAlert(`Füllwort erkannt: „${lastWordMatched}“! Kurz innehalten & Stimme absenken.`)
+          setLastAlert(`Füllwort erkannt: „${lastWordMatched}"! Kurz innehalten & Stimme absenken.`)
         }
       }
 
@@ -1190,6 +1387,11 @@ function LiveStudio({ words }: { words: string[] }) {
     setLastAlert(null)
     setElapsedSeconds(0)
     setSpeechPace(0)
+    setWpmHistory([])
+    setIsAmbientAlert(false)
+    particlesRef.current = []
+    const ctx = particleCanvasRef.current?.getContext('2d')
+    if (ctx && particleCanvasRef.current) ctx.clearRect(0, 0, particleCanvasRef.current.width, particleCanvasRef.current.height)
   }
 
   return (
@@ -1198,7 +1400,7 @@ function LiveStudio({ words }: { words: string[] }) {
         <div className="live-studio-header-titles">
           <span className="eyebrow">ECHTZEIT-SPRECHFLUSS-TRAINER</span>
           <h1>🔴 Live Studio — <em>Präsentation live üben</em></h1>
-          <p className="intro-copy">Sprich frei ins Mikrofon. Füllwörter werden live gezählt & dein Tonwellensignal (Audio-Wave) visualisiert.</p>
+          <p className="intro-copy">Sprich frei ins Mikrofon. Füllwörter werden live gezählt, dein Ton als Wave visualisiert & dein Tempo getracked.</p>
         </div>
         <div className="live-header-status-badge">
           <span className={isListening ? 'live-mic-dot recording' : 'live-mic-dot'} />
@@ -1208,10 +1410,15 @@ function LiveStudio({ words }: { words: string[] }) {
 
       <div className="live-studio-grid">
         <div className="live-studio-panel left-panel">
-          <div className="live-counter-box">
+          <div className={`live-counter-box${isAmbientAlert ? ' ambient-alert' : ''}`}>
             <img src="/logo.png" alt="ähzähler Logo" className="live-logo-badge" />
-            <div className="flip-counter-display">
-              <span className="flip-counter-number">{String(liveCount).padStart(2, '0')}</span>
+
+            {/* Particle canvas overlay */}
+            <div className="particle-canvas-wrap">
+              <div className="flip-counter-display">
+                <span ref={counterRef} className="flip-counter-number">{String(liveCount).padStart(2, '0')}</span>
+              </div>
+              <canvas ref={particleCanvasRef} width={200} height={120} className="particle-canvas" />
             </div>
 
             <div className="audio-visualizer-box" title="Echtzeit-Audio-Waveform deines Mikrofons">
@@ -1264,10 +1471,19 @@ function LiveStudio({ words }: { words: string[] }) {
             </div>
           </div>
 
-          <div className="breakdown" style={{ marginTop: '14px' }}>
+          {/* WPM Rolling Chart */}
+          <div className="wpm-chart-box">
+            <div className="wpm-chart-label">📈 Sprechtempo-Verlauf (letzte 60 Sek.)</div>
+            <canvas ref={wpmCanvasRef} width={460} height={80} className="wpm-chart-canvas" />
+            {wpmHistory.length < 2 && (
+              <div className="wpm-chart-hint">Sprich ins Mikrofon — der Tempo-Graph erscheint hier in Echtzeit</div>
+            )}
+          </div>
+
+          <div className="breakdown" style={{ marginTop: '10px' }}>
             {words.map((word) => (
               <div key={word}>
-                <b>„{word}“</b>
+                <b>„{word}"</b>
                 <strong>{wordCounts[word] || 0}</strong>
                 <span>Treffer</span>
               </div>
@@ -1276,7 +1492,7 @@ function LiveStudio({ words }: { words: string[] }) {
 
           <div className="live-transcript-box">
             <div className="section-label">Live Transkript-Stream</div>
-            <p>{liveTranscript || 'Noch keine Sprache erfasst. Klicke auf „Live-Session starten“ und sprich ins Mikrofon.'}</p>
+            <p>{liveTranscript || 'Noch keine Sprache erfasst. Klicke auf „Live-Session starten" und sprich ins Mikrofon.'}</p>
           </div>
         </div>
       </div>
