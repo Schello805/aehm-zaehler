@@ -170,8 +170,6 @@ function App() {
 
   useEffect(() => {
     if (!file && !url) {
-      setMediaDurationSeconds(null)
-      setProgress((current) => ({ ...current, remainingSeconds: defaultEstimatedAnalysisSeconds }))
       return
     }
 
@@ -201,6 +199,14 @@ function App() {
   }, [file, url])
 
   const sourceLabel = url || file?.name || 'Unbekannte Quelle'
+  const activeHistoryEntry = useMemo(
+    () => (activeHistoryId ? history.find((entry) => entry.id === activeHistoryId) : null),
+    [history, activeHistoryId]
+  )
+  const activeSourceLabel = activeHistoryEntry
+    ? (activeHistoryEntry.title || activeHistoryEntry.sourceLabel)
+    : sourceLabel
+  const activeSourceUrl = activeHistoryEntry?.source || (url.startsWith('http') ? url : '')
 
   const filteredHistory = useMemo(() => {
     const query = historyFilter.trim().toLowerCase()
@@ -506,7 +512,7 @@ function App() {
                       <span>Video / Quelle</span>
                       <span className="source-tag">Analyse fertig</span>
                     </div>
-                    <strong>{sourceLabel}</strong>
+                    <strong>{activeSourceLabel}</strong>
                   </div>
 
                   <div className="main-count">
@@ -562,17 +568,28 @@ function App() {
                     ))}
                   </div>
 
-                  <div className="density-card">
-                    <div className="section-label">Füllwörter pro Minute</div>
-                    <div className="density-chart" aria-label="Füllwörter pro Minute">
-                      {getMinuteBuckets(result).map((bucket) => (
-                        <div className="density-column" key={bucket.minute} title={`${bucket.minute}. Minute: ${bucket.fillerWords} Füllwörter`}>
-                          <div className="density-bar" style={{ height: `${Math.max(8, Math.min(100, bucket.fillerWords * 12))}%` }} />
-                          <span>{bucket.minute}</span>
+                  {(() => {
+                    const minuteBuckets = getMinuteBuckets(result)
+                    const maxMinuteCount = Math.max(1, ...minuteBuckets.map((b) => b.fillerWords))
+                    return (
+                      <div className="density-card">
+                        <div className="section-label">Füllwörter pro Minute</div>
+                        <div className="density-chart" aria-label="Füllwörter pro Minute">
+                          {minuteBuckets.map((bucket) => (
+                            <div className="density-column" key={bucket.minute} title={`${bucket.minute}. Minute: ${bucket.fillerWords} Füllwörter`}>
+                              <div
+                                className="density-bar"
+                                style={{
+                                  height: `${bucket.fillerWords === 0 ? 8 : Math.max(12, Math.min(100, Math.round((bucket.fillerWords / maxMinuteCount) * 100)))}%`,
+                                }}
+                              />
+                              <span>{bucket.minute}</span>
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
-                  </div>
+                      </div>
+                    )
+                  })()}
 
                   <div className="transcript-card">
                     <div className="section-label">Transkript mit Zeitstempeln</div>
@@ -580,9 +597,9 @@ function App() {
                     <div className="transcript-list">
                       {(result.segments || []).map((segment) => (
                         <button className="transcript-segment" type="button" key={`${segment.start}-${segment.end}`} onClick={() => {
-                          if (sourceLabel.startsWith('http')) {
-                            const separator = sourceLabel.includes('?') ? '&' : '?'
-                            window.open(`${sourceLabel}${separator}t=${Math.floor(segment.start)}s`, '_blank', 'noopener,noreferrer')
+                          if (activeSourceUrl.startsWith('http')) {
+                            const separator = activeSourceUrl.includes('?') ? '&' : '?'
+                            window.open(`${activeSourceUrl}${separator}t=${Math.floor(segment.start)}s`, '_blank', 'noopener,noreferrer')
                           } else if (playbackRef.current) {
                             playbackRef.current.currentTime = segment.start
                             void playbackRef.current.play()

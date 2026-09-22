@@ -18,12 +18,18 @@ const projectRoot = process.cwd()
 const localPythonPath = join(projectRoot, '.venv', 'bin', 'python')
 const localTranscriptionScript = join(projectRoot, 'transcribe_local.py')
 
+const commonYtDlpOptions = {
+  noPlaylist: true,
+  quiet: true,
+  extractorArgs: 'youtube:player_client=android,web',
+  userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+}
+
 const getUrlDuration = async (url) => {
   const metadata = await youtubedl(url, {
+    ...commonYtDlpOptions,
     dumpSingleJson: true,
     noDownload: true,
-    noPlaylist: true,
-    quiet: true,
   }, { timeout: 2 * 60 * 1000 })
   return Number(metadata.duration || 0)
 }
@@ -42,9 +48,24 @@ const countWordOccurrences = (text, word) => {
 
 const countSegmentWords = (text, words) => Object.fromEntries(words.map((word) => [word, countWordOccurrences(text, word)]))
 
-const getPhraseCount = (words, counts) => words
-  .filter((word) => word.trim().includes(' '))
-  .reduce((sum, word) => sum + (counts[word] || 0), 0)
+const getPhraseOverlap = (words, counts) => {
+  const singleWordsSet = new Set(
+    words
+      .filter((word) => !word.trim().includes(' '))
+      .flatMap((word) => word.toLocaleLowerCase('de-DE').match(/[\p{L}\p{N}]+/gu) || [])
+  )
+
+  let overlap = 0
+  for (const word of words) {
+    if (!word.trim().includes(' ')) continue
+    const phraseTokens = word.toLocaleLowerCase('de-DE').match(/[\p{L}\p{N}]+/gu) || []
+    const matchingSingleTokensCount = phraseTokens.filter((token) => singleWordsSet.has(token)).length
+    if (matchingSingleTokensCount > 0) {
+      overlap += matchingSingleTokensCount * (counts[word] || 0)
+    }
+  }
+  return overlap
+}
 
 app.post('/api/media-info', async (request, response) => {
   try {
@@ -67,18 +88,22 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
   const analysisController = new AbortController()
   request.on('aborted', () => analysisController.abort())
   try {
+    temporaryDirectory = await mkdtemp(join(tmpdir(), 'aehmzaehler-'))
     const words = JSON.parse(request.body.words || '[]').map((word) => word.trim().toLowerCase()).filter(Boolean)
     let file = request.file
     if (!file && request.body.url) {
-      temporaryDirectory = await mkdtemp(join(tmpdir(), 'aehmzaehler-'))
       const output = join(temporaryDirectory, 'audio.%(ext)s')
-      await youtubedl(request.body.url, { extractAudio: true, audioFormat: 'mp3', noPlaylist: true, output, quiet: true }, { timeout: 10 * 60 * 1000 })
+      await youtubedl(request.body.url, {
+        ...commonYtDlpOptions,
+        extractAudio: true,
+        audioFormat: 'mp3',
+        output,
+      }, { timeout: 10 * 60 * 1000 })
       const downloadedFile = join(temporaryDirectory, 'audio.mp3')
       file = { buffer: await readFile(downloadedFile), originalname: 'linked-media.mp3', mimetype: 'audio/mpeg' }
     }
     if (!file) return response.status(400).json({ error: 'Bitte eine Datei oder einen Link angeben.' })
     if (file.buffer.length > 24 * 1024 * 1024 || file.mimetype === 'video/mp4') {
-      temporaryDirectory ||= await mkdtemp(join(tmpdir(), 'aehmzaehler-'))
       const inputPath = join(temporaryDirectory, 'input-media')
       const compressedPath = join(temporaryDirectory, 'compressed.mp3')
       await writeFile(inputPath, file.buffer)
@@ -87,10 +112,10 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
     }
     if (file.buffer.length > 25 * 1024 * 1024) return response.status(413).json({ error: 'Die Audiodatei ist auch nach der Komprimierung größer als 25 MB. Bitte eine kürzere Aufnahme verwenden.' })
 
-    const workingAudioPath = join(temporaryDirectory || process.cwd(), 'prepared-audio.mp3')
+    const workingAudioPath = join(temporaryDirectory, 'prepared-audio.mp3')
     await writeFile(workingAudioPath, file.buffer)
 
-    const localResult = await runCommand(localPythonPath, [localTranscriptionScript, workingAudioPath], {
+    const localResult = await runCommand(localPythonPath, [localTranscriptionScript, workingAudioPath, words.join(',')], {
       timeout: 20 * 60 * 1000,
       maxBuffer: 50 * 1024 * 1024,
       signal: analysisController.signal,
@@ -100,8 +125,8 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
     const text = transcription.text || ''
     const counts = Object.fromEntries(words.map((word) => [word, countWordOccurrences(text, word)]))
     const fillerWords = Object.values(counts).reduce((sum, count) => sum + count, 0)
-    const phraseMatches = getPhraseCount(words, counts)
-    const baseFillerWords = Math.max(0, fillerWords - phraseMatches)
+    const phraseOverlap = getPhraseOverlap(words, counts)
+    const baseFillerWords = Math.max(0, fillerWords - phraseOverlap)
     const totalWords = text.trim() ? text.trim().split(/\s+/).length : 0
     const segments = Array.isArray(transcription.segments)
       ? transcription.segments.map((segment) => ({
