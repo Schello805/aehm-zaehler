@@ -359,7 +359,7 @@ h2 {
   height: 39px;
   margin-bottom: 13px;
   border-radius: 50%;
-  background: #f8e9e3;
+  background: var(--red-soft);
   color: var(--red);
   font-size: 24px;
 }
@@ -391,7 +391,7 @@ h2 {
   height: 51px;
   padding: 0 15px;
   border: 1px solid var(--line);
-  background: white;
+  background: var(--panel);
   color: var(--red);
 }
 
@@ -424,7 +424,7 @@ h2 {
   border: 1px solid var(--line);
   outline: 0;
   padding: 10px 11px;
-  background: rgba(255,255,255,0.72);
+  background: var(--panel);
   color: var(--ink);
   font-size: 11px;
   resize: vertical;
@@ -622,8 +622,8 @@ h2 {
 }
 
 .result-panel.revealed {
-  border-color: #d9b2a8;
-  background: #fffaf7;
+  border-color: var(--red-soft);
+  background: var(--panel);
 }
 
 .result-content {
@@ -984,7 +984,7 @@ h2 {
 .waveform span {
   width: 3px;
   height: 19px;
-  background: #d8d0c5;
+  background: var(--line);
 }
 
 .waveform span:nth-child(2),
@@ -1477,7 +1477,7 @@ h2 {
   height: 40px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: white;
+  background: var(--panel);
   color: var(--ink);
   font-size: 13px;
   font-weight: 500;
@@ -1491,7 +1491,7 @@ h2 {
 
 .player-control-button:hover:not(:disabled) {
   border-color: var(--ink);
-  background: #fdfbf7;
+  background: var(--bg);
 }
 
 .player-control-button.active {
@@ -1515,7 +1515,7 @@ h2 {
   margin-top: 32px;
   padding: 32px;
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.6);
+  background: var(--panel);
   border: 1px solid var(--line);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.03);
 }
@@ -1658,7 +1658,7 @@ h2 {
   height: 46px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: white;
+  background: var(--panel);
   color: var(--ink);
   font-size: 14px;
   font-weight: 600;
@@ -1667,18 +1667,18 @@ h2 {
 }
 
 .live-stop-button:hover {
-  background: #fee2e2;
-  color: #dc2626;
-  border-color: #fca5a5;
+  background: var(--red-soft);
+  color: var(--red);
+  border-color: var(--red);
 }
 
 .live-alert-banner {
   margin-bottom: 10px;
   padding: 10px 14px;
   border-radius: 8px;
-  background: rgba(239, 68, 68, 0.1);
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  color: #b91c1c;
+  background: var(--red-soft);
+  border: 1px solid var(--red);
+  color: var(--red);
   font-weight: 600;
   font-size: 13px;
   display: flex;
@@ -1697,7 +1697,7 @@ h2 {
 .live-stat-card {
   padding: 10px 14px;
   border-radius: 8px;
-  background: white;
+  background: var(--panel);
   border: 1px solid var(--line);
 }
 
@@ -1722,7 +1722,7 @@ h2 {
   margin-top: 12px;
   padding: 14px;
   border-radius: 10px;
-  background: white;
+  background: var(--panel);
   border: 1px solid var(--line);
   flex: 1;
   min-height: 120px;
