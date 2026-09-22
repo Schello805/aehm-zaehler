@@ -8,11 +8,22 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 
+import { existsSync } from 'node:fs'
+
 const app = express()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 200 * 1024 * 1024 } })
 app.use(express.json())
 const port = process.env.PORT || 8787
-const youtubedl = createYoutubeDl(process.env.YT_DLP_PATH || '/opt/homebrew/bin/yt-dlp')
+
+const getYtDlpPath = () => {
+  if (process.env.YT_DLP_PATH && existsSync(process.env.YT_DLP_PATH)) return process.env.YT_DLP_PATH
+  if (existsSync('/usr/local/bin/yt-dlp')) return '/usr/local/bin/yt-dlp'
+  if (existsSync('/usr/bin/yt-dlp')) return '/usr/bin/yt-dlp'
+  if (existsSync('/opt/homebrew/bin/yt-dlp')) return '/opt/homebrew/bin/yt-dlp'
+  return 'yt-dlp'
+}
+
+const youtubedl = createYoutubeDl(getYtDlpPath())
 const runCommand = promisify(execFile)
 const projectRoot = process.cwd()
 const localPythonPath = join(projectRoot, '.venv', 'bin', 'python')
@@ -146,4 +157,13 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
   }
 })
 
-app.listen(port, () => console.log(`Analyse-API läuft auf http://127.0.0.1:${port}`))
+const distDirectory = join(projectRoot, 'dist')
+if (existsSync(distDirectory)) {
+  app.use(express.static(distDirectory))
+  app.get('*', (request, response, next) => {
+    if (request.path.startsWith('/api')) return next()
+    response.sendFile(join(distDirectory, 'index.html'))
+  })
+}
+
+app.listen(port, () => console.log(`Ähm-Zähler läuft auf http://0.0.0.0:${port}`))

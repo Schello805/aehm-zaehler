@@ -1,152 +1,118 @@
 # Ähm-Zähler
 
-Ein lokales Analyse-Tool für deutsche Sprache, das Füllwörter wie „äh“, „ähm“, „hm“ und ähnliche Muster automatisch erkennt und auswertet.
+Ein lokales Analyse-Tool für deutsche Sprache, das Füllwörter wie „äh“, „ähm“, „hm“, „genau“ und individuelle Sprachmuster automatisch erkennt und statistisch auswertet.
 
-Das Projekt ist komplett lokal-first aufgebaut: Keine OpenAI-API, kein teurer Cloud-Provider, keine Abhängigkeit von geheimen Keys im normalen Nutzungspfad. Für die Transkription wird eine lokale Python-Umgebung mit `faster-whisper` genutzt.
+Das Projekt ist komplett **Local-First** aufgebaut: Keine externen API-Keys, keine Cloud-Kosten, volle Datenschutz-Kontrolle. Für die präzise Spracherkennung wird eine lokale Python-Umgebung mit `faster-whisper` (inklusive optimierter Füllwort-Hotword-Erkennung) genutzt.
 
-## Warum dieses Projekt?
+---
 
-Die App hilft dabei, den Sprechfluss bewusster zu analysieren:
+## ⚡ Easy LXC / Debian 13 One-Liner
 
-- Füllwörter und typische Redewendungen zählen
-- Audio- und Video-Dateien analysieren
-- YouTube-Links direkt verarbeiten
-- eigene Suchbegriffe definieren und anpassen
-- Analyse-Ergebnisse mit Verlauf und Metadaten speichern
+Auf einem frischen **Debian 13 (Trixie) LXC-Container** oder Linux-Server lässt sich die vollständige Anwendung inklusive systemd-Dienst mit nur einem Befehl als Root installieren:
 
-Das Projekt ist für Präsentationen, Selbsttraining, Podcast-Checks, Interviews oder das tägliche Üben von gesprochenem Deutsch gedacht.
+### 🚀 Installation (One-Liner):
 
-## Funktionen
+```bash
+curl -fsSL https://raw.githubusercontent.com/Schello805/aehm-zaehler/main/install.sh | bash
+```
 
-- Upload von Audio-/Video-Dateien
-- Analyse von YouTube-Links via `yt-dlp`
-- lokale Transkription mit Whisper im Projekt-Ordner
-- Zählung eigener Füllwörter und Phrasen
-- kompakte Ergebnisübersicht mit Kennzahlen und Empfehlungen
-- Verlaufshistorie mit Wiederaufnahmen und Bearbeitung
-- cancelierbare Analyse-Läufe
-- keine API-Schlüssel für den Standardbetrieb nötig
+Nach der Installation läuft die App automatisch als systemd-Dienst unter:
+👉 `http://<DEINE-LXC-IP>:8787`
 
-## Tech-Stack
+### 🔄 Update (One-Liner):
 
-- React + TypeScript + Vite
-- Express (Backend-API)
-- Python + `faster-whisper`
-- `yt-dlp` für Link-Metadaten und Download
-- ffmpeg für Audio-Konvertierung
+```bash
+/opt/aehm-zaehler/update.sh
+```
+*oder via Curl:*
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Schello805/aehm-zaehler/main/update.sh)
+```
 
-## Schnellstart
+---
+
+## 💡 Features
+
+- **YouTube- & Medien-Download**: Direktes Einfügen von YouTube-Links (via `yt-dlp` mit HTTP 403-Bypass) oder Upload von MP3/MP4-Dateien.
+- **Präzise Füllwort-Erkennung**: Speziell getunte Whisper-Parameter (`hotwords`, Deaktivierung von Sentence-Smoothing), um gesprochene Laute wie „äh“ und „ähm“ nicht wegzuglätten.
+- **Eigene Wörter & Phrasen**: Flexible Verwaltung von Suchbegriffen in den Einstellungen.
+- **Minuten-Dichtediagramm**: Grafische Auswertung der Füllwort-Frequenz pro Minute.
+- **Interaktives Transkript**: Klickbare Zeitstempel mit Direkt-Sprung zum Audio/Video.
+- **Verlauf & Export**: Automatische lokale Speicherung alter Analysen mit Such- und Filterfunktionen.
+- **Clean LXC Service**: Integrierter Single-Port-Production-Server für einfache Proxmox/LXC-Container-Einbindung.
+
+---
+
+## 🛠 Tech-Stack
+
+- **Frontend**: React 19 + TypeScript + Vite
+- **Backend-API**: Node.js + Express (Single-Port Serve für Produktion)
+- **Audio-Engine**: Python 3 + `faster-whisper` (CPU/GPU-unterstützt)
+- **Medien-Tools**: `ffmpeg` & `yt-dlp`
+
+---
+
+## 💻 Manuelle Installation (Entwicklung / macOS)
 
 ### Voraussetzungen
 
-- Node.js 20+
-- npm
-- Python 3.11+
-- ffmpeg installiert und im PATH verfügbar
-- `yt-dlp` installiert und im PATH verfügbar oder in `YT_DLP_PATH` konfiguriert
+- Node.js 20+ & npm
+- Python 3.11+ mit `venv`
+- `ffmpeg` & `yt-dlp` im PATH
 
-### Installation
+### Installation & Start
 
 ```bash
+# 1. Repository klonen & Node-Pakete installieren
+git clone https://github.com/Schello805/aehm-zaehler.git
+cd aehm-zaehler
 npm install
+
+# 2. Python Virtual Environment & Whisper aufbauen
 python3 -m venv .venv
 ./.venv/bin/pip install --upgrade pip
 ./.venv/bin/pip install faster-whisper
-```
 
-Wenn `yt-dlp` nicht im PATH liegt, stelle die Umgebungsvariable `YT_DLP_PATH` ein:
-
-```bash
-export YT_DLP_PATH="/opt/homebrew/bin/yt-dlp"
-```
-
-### Projekt starten
-
-Backend und Frontend gleichzeitig:
-
-```bash
+# 3. Entwicklungs-Server starten (Backend + Frontend)
 npm run dev:full
 ```
 
-Oder separat:
+Danach erreichbar unter:
+- Frontend: `http://localhost:5173`
+- Backend-API: `http://127.0.0.1:8787`
 
-```bash
-npm run server
-npm run dev
-```
+---
 
-Danach öffnest du die App im Browser unter:
-
-- Frontend: http://localhost:5173
-- Backend: http://127.0.0.1:8787
-
-## Build
-
-```bash
-npm run build
-```
-
-## Projektstruktur
+## 📁 Projektstruktur
 
 ```text
 .
-├── src/                     # React Frontend
-├── public/                  # statische Assets
-├── server.mjs               # Express API
-├── transcribe_local.py      # lokale Whisper-Transkription
-├── package.json             # Scripts und Abhängigkeiten
-├── vite.config.ts           # Vite-Konfiguration
-├── .env.example             # Beispiel-Umgebungsvariablen
-├── .gitignore               # Projekt-Ignore-Datei
-├── README.md                # Projekt-Übersicht
-├── CONTRIBUTING.md           # Beitragshinweise
-├── LICENSE                  # MIT-Lizenz
-├── docs/
-│   ├── SETUP.md             # detaillierte Einrichtung
-│   └── ARCHITECTURE.md      # technische Architektur
-└── .venv/                   # lokale Python-Umgebung
+├── install.sh               # One-Liner Installer für Debian 13 LXC
+├── update.sh                # Automatisiertes Update-Skript
+├── server.mjs               # Express API & Production Static Server
+├── transcribe_local.py      # Python Whisper-Engine mit Hotword-Tuning
+├── src/                     # React Frontend Source Code
+├── public/                  # Statische Assets
+├── package.json             # Node Scripts & Dependencies
+├── vite.config.ts           # Vite Konfiguration
+└── docs/                    # Detaillierte Dokumentation
 ```
 
-## Nutzung
+---
 
-1. Audio oder Video hochladen oder YouTube-Link einfügen
-2. gewünschte Füllwörter oder Muster definieren
-3. Analyse starten
-4. Ergebnis mit ausführlicher Zählung und Vorschlägen prüfen
-5. Verlauf und Wiederholungen im Projektverlauf verwalten
+## 📜 Lizenz
 
-## Lokale Architektur
+Dieses Projekt steht unter der [MIT-Lizenz](LICENSE).
 
-Die App arbeitet bewusst ohne Cloud-Transkription als Standard:
+---
 
-- Eingaben werden lokal verarbeitet
-- Medien werden vor der Transkription vorbereitet
-- `faster-whisper` erzeugt ein Transkript mit Zeitstempeln
-- Text wird nach Füllwörtern und phrasebasierten Mustern ausgewertet
-- Ergebnisse werden im Browser dargestellt
+## 📸 Screenshots
 
-Damit bleibt das Projekt transparenter, günstiger und einfacher zu betreiben.
+### Home & Upload
+<img width="1464" height="764" alt="Screenshot ähzähler home" src="https://github.com/user-attachments/assets/1b11d1ad-2cd8-486b-a2f5-a3e8d1aa0d07" />
 
-## Beitragen
+### Einstellungen (Füllwörter verwalten)
+<img width="1525" height="708" alt="Screenshot ähzähler settings" src="https://github.com/user-attachments/assets/d5dd25d7-aee3-4a4d-aebb-9a435032f961" />
 
-Beiträge sind willkommen. Bitte prüfe zunächst die Hinweise in [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Lizenz
-
-Dieses Projekt steht unter der MIT-Lizenz. Siehe [LICENSE](LICENSE).
-
-## Hinweis
-
-Das Projekt wurde bewusst als lokal nutzbares Open-Source-Tool entwickelt. Der Standardbetrieb benötigt keine externe API-Konfiguration. Für die besten Ergebnisse empfiehlt sich eine gute Sprachaufnahme mit sauberem Audio und möglichst wenig Hintergrundrauschen.
-
-HOME
-<img width="1464" height="764" alt="Screenshot ähzähler home" src="https://github.com/user-attachments/assets/1b11d1ad-2cd8-486b-a2f5-a3e8d1aa0d07" />
-
-Settings
-<img width="1525" height="708" alt="Screenshot ähzähler settings" src="https://github.com/user-attachments/assets/d5dd25d7-aee3-4a4d-aebb-9a435032f961" />
-
-Analyse
-<img width="704" height="667" alt="Analyse" src="https://github.com/user-attachments/assets/862820f2-9349-46a9-93f3-fb2df442c0dc" />
-
-Ergebnis
+### Ergebnis & Zeitstempel
 <img width="677" height="777" alt="Screenshot Ergebnis" src="https://github.com/user-attachments/assets/d0390779-349a-40b3-897d-c383e301faca" />
