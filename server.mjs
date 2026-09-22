@@ -157,6 +157,104 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
   }
 })
 
+app.post('/api/clean-audio', upload.single('file'), async (request, response) => {
+  let temporaryDirectory
+  try {
+    temporaryDirectory = await mkdtemp(join(tmpdir(), 'aehmclean-'))
+    let file = request.file
+    if (!file && request.body.url) {
+      const output = join(temporaryDirectory, 'audio.%(ext)s')
+      await youtubedl(request.body.url, {
+        ...commonYtDlpOptions,
+        extractAudio: true,
+        audioFormat: 'mp3',
+        output,
+      }, { timeout: 10 * 60 * 1000 })
+      const downloadedFile = join(temporaryDirectory, 'audio.mp3')
+      file = { buffer: await readFile(downloadedFile), originalname: 'linked-media.mp3', mimetype: 'audio/mpeg' }
+    }
+    if (!file) return response.status(400).json({ error: 'Bitte eine Datei oder einen Link angeben.' })
+
+    const inputPath = join(temporaryDirectory, 'input-audio.mp3')
+    await writeFile(inputPath, file.buffer)
+
+    const rawSegments = JSON.parse(request.body.segments || '[]')
+    const rawWords = JSON.parse(request.body.words || '[]').map((w) => String(w).trim().toLowerCase()).filter(Boolean)
+    const duration = Number(request.body.duration || 0)
+
+    const fillerSegments = rawSegments.filter((seg) => {
+      if (!seg.counts) return false
+      return Object.entries(seg.counts).some(([w, count]) => rawWords.includes(w) && Number(count) > 0)
+    })
+
+    if (!fillerSegments.length) {
+      response.setHeader('Content-Type', 'audio/mpeg')
+      response.setHeader('Content-Disposition', 'attachment; filename="audio-bereinigt.mp3"')
+      return response.send(file.buffer)
+    }
+
+    const removeIntervals = fillerSegments
+      .map((s) => [Math.max(0, Number(s.start || 0) - 0.05), Number(s.end || 0) + 0.05])
+      .sort((a, b) => a[0] - b[0])
+
+    const mergedRemove = []
+    for (const interval of removeIntervals) {
+      if (!mergedRemove.length) {
+        mergedRemove.push(interval)
+      } else {
+        const last = mergedRemove[mergedRemove.length - 1]
+        if (interval[0] <= last[1]) {
+          last[1] = Math.max(last[1], interval[1])
+        } else {
+          mergedRemove.push(interval)
+        }
+      }
+    }
+
+    const keepIntervals = []
+    let currentPos = 0
+    for (const [rStart, rEnd] of mergedRemove) {
+      if (rStart > currentPos + 0.1) {
+        keepIntervals.push([currentPos, rStart])
+      }
+      currentPos = Math.max(currentPos, rEnd)
+    }
+    if (duration > currentPos + 0.1) {
+      keepIntervals.push([currentPos, duration])
+    }
+
+    if (!keepIntervals.length) {
+      response.setHeader('Content-Type', 'audio/mpeg')
+      response.setHeader('Content-Disposition', 'attachment; filename="audio-bereinigt.mp3"')
+      return response.send(file.buffer)
+    }
+
+    const filterParts = []
+    const concatLabels = []
+    keepIntervals.forEach(([start, end], idx) => {
+      const label = `a${idx}`
+      filterParts.push(`[0:a]atrim=start=${start.toFixed(3)}:end=${end.toFixed(3)},asetpts=PTS-STARTPTS[${label}]`)
+      concatLabels.push(`[${label}]`)
+    })
+    filterParts.push(`${concatLabels.join('')}concat=n=${keepIntervals.length}:v=0:a=1[outa]`)
+    const filterComplex = filterParts.join('; ')
+
+    const outputPath = join(temporaryDirectory, 'cleaned.mp3')
+    await runCommand('ffmpeg', ['-y', '-i', inputPath, '-filter_complex', filterComplex, '-map', '[outa]', '-b:a', '128k', outputPath], { timeout: 10 * 60 * 1000 })
+
+    const cleanedBuffer = await readFile(outputPath)
+    response.setHeader('Content-Type', 'audio/mpeg')
+    response.setHeader('Content-Disposition', 'attachment; filename="audio-bereinigt.mp3"')
+    return response.send(cleanedBuffer)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Audio-Bereinigung fehlgeschlagen.'
+    console.error('Audio-Bereinigung fehlgeschlagen:', message)
+    return response.status(500).json({ error: message })
+  } finally {
+    if (typeof temporaryDirectory === 'string') await rm(temporaryDirectory, { recursive: true, force: true })
+  }
+})
+
 const distDirectory = join(projectRoot, 'dist')
 if (existsSync(distDirectory)) {
   app.use(express.static(distDirectory))

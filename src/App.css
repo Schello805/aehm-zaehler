@@ -18,7 +18,7 @@ body {
   margin: 0;
   max-width: 100%;
   overflow-x: hidden;
-  font-family: Inter, 'Segoe UI', sans-serif;
+  font-family: 'Plus Jakarta Sans', 'Outfit', system-ui, sans-serif;
   color: var(--ink);
   background: var(--bg);
 }
@@ -61,7 +61,7 @@ main {
   border-radius: 50%;
   background: var(--red);
   color: white;
-  font-family: Georgia, serif;
+  font-family: 'Outfit', sans-serif;
   font-size: 21px;
 }
 
@@ -117,10 +117,10 @@ main {
 h1 {
   margin: 0 0 10px;
   color: var(--ink);
-  font-family: Georgia, 'Times New Roman', serif;
-  font-size: clamp(28px, 2.8vw, 40px);
-  font-weight: 400;
-  letter-spacing: -3px;
+  font-family: 'Outfit', sans-serif;
+  font-size: clamp(30px, 3vw, 44px);
+  font-weight: 700;
+  letter-spacing: -1.5px;
   line-height: 0.98;
 }
 
@@ -176,9 +176,9 @@ h1 em {
 h2 {
   margin: 0;
   color: var(--ink);
-  font-family: Georgia, 'Times New Roman', serif;
-  font-size: 25px;
-  font-weight: 400;
+  font-family: 'Outfit', sans-serif;
+  font-size: 24px;
+  font-weight: 600;
 }
 
 .format-note,
@@ -596,10 +596,10 @@ h2 {
 .main-count strong {
   display: block;
   color: var(--red);
-  font-family: Georgia, serif;
-  font-size: 54px;
-  font-weight: 400;
-  letter-spacing: -4px;
+  font-family: 'Outfit', sans-serif;
+  font-size: 56px;
+  font-weight: 700;
+  letter-spacing: -2px;
   line-height: 1;
 }
 
@@ -682,9 +682,9 @@ h2 {
 .optimization-card h3 {
   margin: 4px 0 0;
   color: var(--ink);
-  font-family: Georgia, serif;
+  font-family: 'Outfit', sans-serif;
   font-size: 17px;
-  font-weight: 400;
+  font-weight: 600;
 }
 
 .optimization-heading > strong {
@@ -745,9 +745,9 @@ h2 {
 
 .breakdown b {
   color: var(--ink);
-  font-family: Georgia, serif;
+  font-family: 'Outfit', sans-serif;
   font-size: 17px;
-  font-weight: 400;
+  font-weight: 600;
 }
 
 .breakdown strong {
@@ -871,8 +871,9 @@ h2 {
 .empty-result p {
   margin: 25px 0 7px;
   color: var(--ink);
-  font-family: Georgia, serif;
+  font-family: 'Outfit', sans-serif;
   font-size: 20px;
+  font-weight: 600;
 }
 
 .empty-result small {
@@ -1202,8 +1203,9 @@ h2 {
 
 .word-label {
   color: var(--ink);
-  font-family: Georgia, serif;
+  font-family: 'Outfit', sans-serif;
   font-size: 21px;
+  font-weight: 600;
 }
 
 .row-actions {
@@ -1261,6 +1263,156 @@ h2 {
 .add-word button span {
   margin-left: 10px;
   font-size: 18px;
+}
+
+/* Füllwort-Eraser Card & Interactive Player Controls */
+.eraser-card {
+  margin-top: 24px;
+  padding: 20px 22px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(199, 91, 71, 0.08) 0%, rgba(255, 255, 255, 0.6) 100%);
+  border: 1px solid rgba(199, 91, 71, 0.25);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.02);
+}
+
+.eraser-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.eraser-icon {
+  font-size: 28px;
+  line-height: 1;
+}
+
+.eraser-header h3 {
+  margin: 0 0 4px 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.eraser-header p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.eraser-button {
+  width: 100%;
+  height: 48px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--red);
+  color: white;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.eraser-button:hover:not(:disabled) {
+  background: #b24d3a;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(199, 91, 71, 0.3);
+}
+
+.eraser-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.waveform-bar-card {
+  margin-top: 24px;
+  padding: 18px 20px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.4);
+  border: 1px solid var(--line);
+}
+
+.waveform-timeline {
+  position: relative;
+  height: 36px;
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 8px;
+  margin: 12px 0 16px 0;
+  cursor: pointer;
+  overflow: hidden;
+  border: 1px solid var(--line);
+}
+
+.timeline-track {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: rgba(0, 0, 0, 0.15);
+  transform: translateY(-50%);
+}
+
+.timeline-filler-marker {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  background: var(--red);
+  border-radius: 3px;
+  box-shadow: 0 0 6px rgba(199, 91, 71, 0.6);
+  transition: transform 0.15s ease, background-color 0.15s ease;
+}
+
+.timeline-filler-marker:hover {
+  background: #e63917;
+  transform: scaleY(1.15);
+  z-index: 2;
+}
+
+.player-extra-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.player-control-button {
+  flex: 1;
+  min-width: 140px;
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.player-control-button:hover:not(:disabled) {
+  border-color: var(--ink);
+  background: #fdfbf7;
+}
+
+.player-control-button.active {
+  background: var(--red-soft);
+  border-color: var(--red);
+  color: var(--red);
+  font-weight: 600;
+}
+
+.player-control-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 footer {

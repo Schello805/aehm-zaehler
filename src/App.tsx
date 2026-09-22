@@ -151,10 +151,91 @@ function App() {
   const [historyEditValue, setHistoryEditValue] = useState('')
   const [historyFilter, setHistoryFilter] = useState('')
   const [historySort, setHistorySort] = useState<'newest' | 'oldest' | 'words' | 'rate'>('newest')
+  const [isCleaningAudio, setIsCleaningAudio] = useState(false)
+  const [cleanAudioError, setCleanAudioError] = useState('')
+  const [isSupercutActive, setIsSupercutActive] = useState(false)
+
   const fileInputRef = useRef<HTMLInputElement>(null)
   const playbackRef = useRef<HTMLAudioElement>(null)
   const analysisControllerRef = useRef<AbortController | null>(null)
   const playbackUrl = useMemo(() => (file ? URL.createObjectURL(file) : ''), [file])
+
+  const fillerSegments = useMemo(() => {
+    if (!result?.segments) return []
+    return result.segments.filter((seg) => {
+      if (!seg.counts) return false
+      return Object.entries(seg.counts).some(([w, count]) => words.includes(w) && count > 0)
+    })
+  }, [result, words])
+
+  const jumpToFiller = (direction: 'next' | 'prev') => {
+    if (!playbackRef.current || !fillerSegments.length) return
+    const currentTime = playbackRef.current.currentTime
+    if (direction === 'next') {
+      const nextSeg = fillerSegments.find((seg) => seg.start > currentTime + 0.3) || fillerSegments[0]
+      playbackRef.current.currentTime = Math.max(0, nextSeg.start - 0.1)
+      void playbackRef.current.play()
+    } else {
+      const prevSegs = fillerSegments.filter((seg) => seg.start < currentTime - 0.5)
+      const prevSeg = prevSegs.length ? prevSegs[prevSegs.length - 1] : fillerSegments[fillerSegments.length - 1]
+      playbackRef.current.currentTime = Math.max(0, prevSeg.start - 0.1)
+      void playbackRef.current.play()
+    }
+  }
+
+  useEffect(() => {
+    if (!isSupercutActive || !playbackRef.current || !fillerSegments.length) return
+
+    const interval = window.setInterval(() => {
+      if (!playbackRef.current || playbackRef.current.paused) return
+      const currentTime = playbackRef.current.currentTime
+      const currentSeg = fillerSegments.find((seg) => currentTime >= seg.start - 0.2 && currentTime <= seg.end + 0.3)
+      if (!currentSeg) {
+        const nextSeg = fillerSegments.find((seg) => seg.start > currentTime) || fillerSegments[0]
+        playbackRef.current.currentTime = Math.max(0, nextSeg.start - 0.1)
+      }
+    }, 250)
+
+    return () => window.clearInterval(interval)
+  }, [isSupercutActive, fillerSegments])
+
+  const downloadCleanAudio = async () => {
+    if (!result) return
+    setIsCleaningAudio(true)
+    setCleanAudioError('')
+    try {
+      const body = new FormData()
+      body.append('words', JSON.stringify(words))
+      body.append('segments', JSON.stringify(result.segments || []))
+      body.append('duration', String(result.duration || 0))
+      if (file) body.append('file', file)
+      if (url) body.append('url', url)
+
+      const response = await fetch('/api/clean-audio', {
+        method: 'POST',
+        body,
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Audio-Bereinigung fehlgeschlagen.')
+      }
+
+      const blob = await response.blob()
+      const downloadUrl = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = downloadUrl
+      anchor.download = 'audio-bereinigt.mp3'
+      document.body.appendChild(anchor)
+      anchor.click()
+      document.body.removeChild(anchor)
+      URL.revokeObjectURL(downloadUrl)
+    } catch (err) {
+      setCleanAudioError(err instanceof Error ? err.message : 'Audio-Bereinigung fehlgeschlagen.')
+    } finally {
+      setIsCleaningAudio(false)
+    }
+  }
 
   useEffect(() => () => {
     if (playbackUrl) URL.revokeObjectURL(playbackUrl)
@@ -590,6 +671,82 @@ function App() {
                       </div>
                     )
                   })()}
+
+                  <div className="waveform-bar-card">
+                    <div className="section-label">Interaktive Füllwort-Timeline & Player</div>
+                    <div
+                      className="waveform-timeline"
+                      title="Klicke auf eine Stelle, um dorthin zu springen"
+                      onClick={(e) => {
+                        if (!playbackRef.current || !result?.duration) return
+                        const rect = e.currentTarget.getBoundingClientRect()
+                        const clickX = e.clientX - rect.left
+                        const ratio = Math.max(0, Math.min(1, clickX / rect.width))
+                        playbackRef.current.currentTime = ratio * result.duration
+                        void playbackRef.current.play()
+                      }}
+                    >
+                      <div className="timeline-track" />
+                      {fillerSegments.map((seg) => {
+                        const leftPercent = (seg.start / (result.duration || 1)) * 100
+                        const widthPercent = Math.max(0.6, ((seg.end - seg.start) / (result.duration || 1)) * 100)
+                        return (
+                          <div
+                            key={`${seg.start}-${seg.end}`}
+                            className="timeline-filler-marker"
+                            style={{ left: `${leftPercent}%`, width: `${widthPercent}%` }}
+                            title={`Füllwort bei ${formatTimestamp(seg.start)}: „${seg.text}“`}
+                          />
+                        )
+                      })}
+                    </div>
+
+                    <div className="player-extra-controls">
+                      <button
+                        type="button"
+                        className="player-control-button"
+                        onClick={() => jumpToFiller('prev')}
+                        disabled={!fillerSegments.length || !file}
+                      >
+                        ⏮️ Vorheriges Füllwort
+                      </button>
+                      <button
+                        type="button"
+                        className="player-control-button"
+                        onClick={() => jumpToFiller('next')}
+                        disabled={!fillerSegments.length || !file}
+                      >
+                        ⏭️ Nächstes Füllwort
+                      </button>
+                      <button
+                        type="button"
+                        className={isSupercutActive ? 'player-control-button active' : 'player-control-button'}
+                        onClick={() => setIsSupercutActive(!isSupercutActive)}
+                        disabled={!fillerSegments.length || !file}
+                      >
+                        🎧 {isSupercutActive ? 'Supercut beenden' : 'Füllwort-Supercut abspielen'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="eraser-card">
+                    <div className="eraser-header">
+                      <div className="eraser-icon">✂️</div>
+                      <div>
+                        <h3>Füllwort-Eraser</h3>
+                        <p>Erstelle automatisch eine neue MP3-Audiodatei, aus der alle erkannten Füllwörter herausgeschnitten wurden.</p>
+                      </div>
+                    </div>
+                    {cleanAudioError && <p className="error-message">{cleanAudioError}</p>}
+                    <button
+                      type="button"
+                      className="eraser-button"
+                      onClick={downloadCleanAudio}
+                      disabled={isCleaningAudio || !result?.fillerWords}
+                    >
+                      {isCleaningAudio ? 'Bereinigung läuft …' : 'Audio ohne Füllwörter herunterladen (MP3)'}
+                    </button>
+                  </div>
 
                   <div className="transcript-card">
                     <div className="section-label">Transkript mit Zeitstempeln</div>
