@@ -15,6 +15,7 @@ if [ -d "$INSTALL_DIR/.git" ]; then
 fi
 
 echo "--> [1/5] Hole neuesten Code von GitHub..."
+git reset --hard HEAD
 git pull origin main
 
 echo "--> [2/5] Aktualisiere Node-Pakete & baue Frontend..."
