@@ -1,0 +1,22 @@
+{
+  "name": "ähzähler",
+  "short_name": "ähzähler",
+  "description": "Füllwörter in Sprache erkennen und analysieren",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f3efe8",
+  "theme_color": "#c75b47",
+  "icons": [
+    {
+      "src": "/favicon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

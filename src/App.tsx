@@ -116,7 +116,7 @@ const getOptimizationAdvice = (result: Result) => {
 }
 
 function App() {
-  const [view, setView] = useState<'analyse' | 'settings'>('analyse')
+  const [view, setView] = useState<'analyse' | 'live' | 'settings'>('analyse')
   const [words, setWords] = useState<string[]>(() => {
     try {
       const stored = JSON.parse(localStorage.getItem('fill-words') || 'null')
@@ -453,11 +453,12 @@ function App() {
     <main>
       <nav className="topbar">
         <button className="brand" onClick={() => setView('analyse')} type="button">
-          <span className="brand-mark">ä</span>
-          <span>ähzähler</span>
+          <img className="brand-logo-img" src="/logo.png" alt="ähzähler Logo" />
+          <span className="brand-title">ähzähler</span>
         </button>
         <div className="nav-actions">
           <button className={view === 'analyse' ? 'nav-link active' : 'nav-link'} onClick={() => setView('analyse')} type="button">Analyse</button>
+          <button className={view === 'live' ? 'nav-link active' : 'nav-link'} onClick={() => setView('live')} type="button">🔴 Live Studio</button>
           <button className={view === 'settings' ? 'nav-link active' : 'nav-link'} onClick={() => setView('settings')} type="button">Settings</button>
           <span className="nav-status"><i /> Analyse-Studio</span>
         </div>
@@ -476,6 +477,8 @@ function App() {
           addWord={addWord}
           saveWord={saveWord}
         />
+      ) : view === 'live' ? (
+        <LiveStudio words={words} />
       ) : (
         <>
           <section className="intro">
@@ -975,6 +978,199 @@ function Settings({
             placeholder="Neues Füllwort"
           />
           <button type="button" onClick={addWord}>Hinzufügen <span>+</span></button>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function LiveStudio({ words }: { words: string[] }) {
+  const [isListening, setIsListening] = useState(false)
+  const [liveCount, setLiveCount] = useState(0)
+  const [wordCounts, setWordCounts] = useState<Record<string, number>>({})
+  const [liveTranscript, setLiveTranscript] = useState<string>('')
+  const [lastAlert, setLastAlert] = useState<string | null>(null)
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  const [speechPace, setSpeechPace] = useState(0)
+  const recognitionRef = useRef<any>(null)
+  const timerRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (!isListening) {
+      if (timerRef.current) window.clearInterval(timerRef.current)
+      return
+    }
+
+    timerRef.current = window.setInterval(() => {
+      setElapsedSeconds((sec) => sec + 1)
+    }, 1000)
+
+    return () => {
+      if (timerRef.current) window.clearInterval(timerRef.current)
+    }
+  }, [isListening])
+
+  const startListening = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (!SpeechRecognition) {
+      alert('Dein Browser unterstützt keine Echtzeit-Spracherkennung. Bitte nutze Google Chrome oder MS Edge für das Live Studio.')
+      return
+    }
+
+    try {
+      const recognition = new SpeechRecognition()
+      recognition.continuous = true
+      recognition.interimResults = true
+      recognition.lang = 'de-DE'
+
+      recognition.onresult = (event: any) => {
+        let currentTranscript = ''
+        for (let i = 0; i < event.results.length; i++) {
+          currentTranscript += event.results[i][0].transcript
+        }
+
+        setLiveTranscript(currentTranscript)
+
+        const lowerText = currentTranscript.toLowerCase()
+        const tokens = lowerText.match(/[\p{L}\p{N}]+/gu) || []
+
+        if (tokens.length > 0 && elapsedSeconds > 0) {
+          const wpm = Math.round((tokens.length / elapsedSeconds) * 60)
+          setSpeechPace(wpm)
+        }
+
+        let totalFiller = 0
+        const counts: Record<string, number> = {}
+
+        for (const w of words) {
+          const wTokens = w.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []
+          if (!wTokens.length) continue
+          let occurrences = 0
+          for (let i = 0; i <= tokens.length - wTokens.length; i++) {
+            if (wTokens.every((tok, offset) => tokens[i + offset] === tok)) {
+              occurrences++
+            }
+          }
+          if (occurrences > 0) {
+            counts[w] = occurrences
+            totalFiller += occurrences
+          }
+        }
+
+        setLiveCount(totalFiller)
+        setWordCounts(counts)
+
+        const lastWordMatched = words.find((w) => (counts[w] || 0) > (wordCounts[w] || 0))
+        if (lastWordMatched) {
+          setLastAlert(`Füllwort erkannt: „${lastWordMatched}“! Kurz innehalten & Stimme absenken.`)
+        }
+      }
+
+      recognition.onerror = (err: any) => {
+        console.error('Speech recognition error:', err)
+      }
+
+      recognition.onend = () => {
+        if (isListening) {
+          try { recognition.start() } catch {}
+        }
+      }
+
+      recognition.start()
+      recognitionRef.current = recognition
+      setIsListening(true)
+      setLastAlert('Live-Erkennung aktiv. Sprich frei ins Mikrofon!')
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  const stopListening = () => {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop()
+      recognitionRef.current = null
+    }
+    setIsListening(false)
+  }
+
+  const resetLiveSession = () => {
+    stopListening()
+    setLiveCount(0)
+    setWordCounts({})
+    setLiveTranscript('')
+    setLastAlert(null)
+    setElapsedSeconds(0)
+    setSpeechPace(0)
+  }
+
+  return (
+    <section className="live-studio-view">
+      <p className="eyebrow">ECHTZEIT-SPRECHFLUSS-TRAINER</p>
+      <h1>🔴 Live Studio<br /><em>Präsentation live üben.</em></h1>
+      <p className="intro-copy">Sprich frei ins Mikrofon. Der Ähm-Zähler erfasst Füllwörter in Echtzeit und gibt dir sofortiges Feedback.</p>
+
+      <div className="live-studio-panel">
+        <div className="live-counter-box">
+          <img src="/logo.png" alt="ähzähler Logo" className="live-logo-badge" />
+          <div className="flip-counter-display">
+            <span className="flip-counter-number">{String(liveCount).padStart(2, '0')}</span>
+          </div>
+          <div className="live-status-indicator">
+            <span className={isListening ? 'live-mic-dot recording' : 'live-mic-dot'} />
+            <span>{isListening ? 'Mikrofon aktiv & Live-Analyse läuft' : 'Mikrofon bereit'}</span>
+          </div>
+        </div>
+
+        {lastAlert && (
+          <div className="live-alert-banner">
+            <span>⚠️</span>
+            <span>{lastAlert}</span>
+          </div>
+        )}
+
+        <div className="live-controls">
+          {!isListening ? (
+            <button type="button" className="live-start-button" onClick={startListening}>
+              <span>🎙️ Live-Session starten</span>
+            </button>
+          ) : (
+            <button type="button" className="live-stop-button" onClick={stopListening}>
+              <span>⏸️ Pause</span>
+            </button>
+          )}
+          <button type="button" className="history-clear-button" onClick={resetLiveSession}>
+            Zurücksetzen
+          </button>
+        </div>
+
+        <div className="live-stats-grid">
+          <div className="live-stat-card">
+            <b>Dauer</b>
+            <strong>{formatTimestamp(elapsedSeconds)} min</strong>
+          </div>
+          <div className="live-stat-card">
+            <b>Füllwörter gesamt</b>
+            <strong>{liveCount}</strong>
+          </div>
+          <div className="live-stat-card">
+            <b>Sprechtempo (WPM)</b>
+            <strong>{speechPace} <span>Wörter/min</span></strong>
+          </div>
+        </div>
+
+        <div className="breakdown" style={{ marginTop: '20px' }}>
+          {words.map((word) => (
+            <div key={word}>
+              <b>„{word}“</b>
+              <strong>{wordCounts[word] || 0}</strong>
+              <span>Treffer</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="live-transcript-box">
+          <div className="section-label">Live Transkript-Stream</div>
+          <p>{liveTranscript || 'Noch keine Sprache erfasst. Klicke auf „Live-Session starten“ und sprich ins Mikrofon.'}</p>
         </div>
       </div>
     </section>
