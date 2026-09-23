@@ -1294,20 +1294,26 @@ function LiveStudio({ words }: { words: string[] }) {
   }
 
   const startListening = async () => {
+    console.log('[LiveStudio] startListening() called')
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    console.log('[LiveStudio] SpeechRecognition available:', !!SpeechRecognition)
     if (!SpeechRecognition) {
       alert('Dein Browser unterstützt keine Echtzeit-Spracherkennung. Bitte nutze Google Chrome oder MS Edge für das Live Studio.')
       return
     }
 
     try {
+      console.log('[LiveStudio] Requesting microphone...')
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      console.log('[LiveStudio] Microphone granted, tracks:', stream.getTracks().length)
       void startVisualizer(stream)
 
+      console.log('[LiveStudio] Starting SpeechRecognition, words:', words)
       const recognition = new SpeechRecognition()
       recognition.continuous = true
       recognition.interimResults = true
       recognition.lang = 'de-DE'
+      recognition.maxAlternatives = 3
 
       recognition.onresult = (event: any) => {
         // Separate final from interim text
@@ -1417,22 +1423,44 @@ function LiveStudio({ words }: { words: string[] }) {
         }
       }
 
+      recognition.onstart = () => {
+        console.log('[LiveStudio] recognition.onstart — recognition is running')
+      }
+
       recognition.onerror = (err: any) => {
-        console.error('Speech recognition error:', err)
+        console.error('[LiveStudio] recognition.onerror:', err.error, err.message, err)
+        // 'not-allowed' = mic permission denied
+        // 'network' = needs internet for de-DE
+        // 'aborted' = recognition was stopped
+        // 'audio-capture' = no mic found
+        // 'no-speech' = silence
+        if (err.error === 'not-allowed') {
+          setLastAlert('Mikrofon-Zugriff verweigert. Bitte erlaube den Zugriff in den Browser-Einstellungen.')
+        } else if (err.error === 'network') {
+          setLastAlert('Netzwerkfehler: Spracherkennung benötigt eine Internetverbindung.')
+        } else if (err.error !== 'no-speech' && err.error !== 'aborted') {
+          setLastAlert(`Erkennungsfehler: ${err.error}`)
+        }
       }
 
       recognition.onend = () => {
+        console.log('[LiveStudio] recognition.onend — restarting:', isListening)
         if (isListening) {
-          try { recognition.start() } catch {}
+          try { recognition.start() } catch (restartErr) {
+            console.warn('[LiveStudio] Restart failed:', restartErr)
+          }
         }
       }
 
       recognition.start()
+      console.log('[LiveStudio] recognition.start() called')
       recognitionRef.current = recognition
       setIsListening(true)
       setLastAlert('Live-Erkennung aktiv. Sprich frei ins Mikrofon!')
     } catch (e) {
-      console.error('Konnte Mikrofon nicht starten:', e)
+      console.error('[LiveStudio] startListening CATCH:', e)
+      const msg = e instanceof Error ? e.message : String(e)
+      setLastAlert(`Fehler beim Starten: ${msg}`)
     }
   }
 
