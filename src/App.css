@@ -2570,18 +2570,136 @@ h2 {
 
 .timeline-filler-marker {
   position: absolute;
-  top: 4px;
-  bottom: 4px;
+  top: 3px;
+  bottom: 3px;
   background: var(--red);
   border-radius: 3px;
   box-shadow: 0 0 6px rgba(199, 91, 71, 0.6);
   transition: transform 0.15s ease, background-color 0.15s ease;
+  z-index: 2;
 }
 
 .timeline-filler-marker:hover {
   background: #e63917;
-  transform: scaleY(1.15);
-  z-index: 2;
+  transform: scaleY(1.18);
+  z-index: 4;
+}
+
+.timeline-pause-marker {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  background: rgba(217, 119, 6, 0.45);
+  border: 1px solid rgba(217, 119, 6, 0.85);
+  border-radius: 2px;
+  transition: transform 0.15s ease, background-color 0.15s ease;
+  z-index: 1;
+}
+
+.timeline-pause-marker:hover {
+  background: rgba(217, 119, 6, 0.8);
+  transform: scaleY(1.2);
+  z-index: 4;
+}
+
+.timeline-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #ffffff;
+  box-shadow: 0 0 8px 1px rgba(255, 255, 255, 0.9), 0 0 2px 1px #3b82f6;
+  pointer-events: none;
+  z-index: 5;
+  transition: left 0.1s linear;
+}
+
+.timeline-playhead::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #3b82f6;
+  box-shadow: 0 0 6px #3b82f6;
+}
+
+.sniper-header-pills {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sniper-status-pill {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 6px;
+  letter-spacing: 0.2px;
+}
+
+.sniper-status-pill.filler {
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.25);
+}
+
+.sniper-status-pill.pause {
+  background: rgba(217, 119, 6, 0.12);
+  color: #d97706;
+  border: 1px solid rgba(217, 119, 6, 0.25);
+}
+
+.sniper-controls-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.sniper-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.sniper-row-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  min-width: 125px;
+}
+
+.sniper-btn-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.sniper-counter-badge {
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  white-space: nowrap;
+  min-width: 70px;
+  text-align: center;
+}
+
+.sniper-counter-badge.pause {
+  background: rgba(217, 119, 6, 0.1);
+  color: #d97706;
+  border-color: rgba(217, 119, 6, 0.2);
 }
 
 .player-extra-controls {
@@ -2592,13 +2710,13 @@ h2 {
 
 .player-control-button {
   flex: 1;
-  min-width: 140px;
-  height: 40px;
+  min-width: 120px;
+  height: 38px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
   color: var(--ink);
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.15s ease;
@@ -2613,16 +2731,64 @@ h2 {
   background: var(--bg);
 }
 
-.player-control-button.active {
-  background: var(--red-soft);
-  border-color: var(--red);
+.player-control-button.pause-btn:hover:not(:disabled) {
+  border-color: #d97706;
+  color: #d97706;
+}
+
+.player-control-button.supercut-btn {
+  flex: 1.5;
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.3);
   color: var(--red);
   font-weight: 600;
+}
+
+.player-control-button.supercut-btn:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: var(--red);
+}
+
+.player-control-button.active {
+  background: var(--red);
+  border-color: var(--red);
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.4);
 }
 
 .player-control-button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+.sniper-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.keyboard-shortcut-hint {
+  font-size: 11.5px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.keyboard-shortcut-hint kbd {
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.15);
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: var(--ink);
 }
 
 footer {

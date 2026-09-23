@@ -392,6 +392,48 @@ function App() {
     })
   }, [result, words])
 
+  const pauseSegments = useMemo(() => {
+    if (!result?.segments || result.segments.length < 2) return []
+    const pauses: Array<{ id: string; start: number; end: number; duration: number }> = []
+    const segs = result.segments
+    if (segs[0].start >= 1.8) {
+      pauses.push({
+        id: 'pause-0',
+        start: 0,
+        end: segs[0].start,
+        duration: segs[0].start,
+      })
+    }
+    for (let i = 0; i < segs.length - 1; i++) {
+      const gap = segs[i + 1].start - segs[i].end
+      if (gap >= 1.8) {
+        pauses.push({
+          id: `pause-${i + 1}`,
+          start: segs[i].end,
+          end: segs[i + 1].start,
+          duration: gap,
+        })
+      }
+    }
+    return pauses
+  }, [result])
+
+  const currentFillerIndex = useMemo(() => {
+    if (!fillerSegments.length) return -1
+    const idx = fillerSegments.findIndex((seg) => activePlayTime >= seg.start - 0.25 && activePlayTime <= seg.end + 0.3)
+    if (idx !== -1) return idx
+    const prevs = fillerSegments.filter((seg) => seg.start <= activePlayTime)
+    return prevs.length ? prevs.length - 1 : 0
+  }, [fillerSegments, activePlayTime])
+
+  const currentPauseIndex = useMemo(() => {
+    if (!pauseSegments.length) return -1
+    const idx = pauseSegments.findIndex((p) => activePlayTime >= p.start - 0.25 && activePlayTime <= p.end + 0.25)
+    if (idx !== -1) return idx
+    const prevs = pauseSegments.filter((p) => p.start <= activePlayTime)
+    return prevs.length ? prevs.length - 1 : 0
+  }, [pauseSegments, activePlayTime])
+
   const seekAndPlay = (seconds: number) => {
     const target = Math.max(0, seconds)
     setActivePlayTime(target)
@@ -437,6 +479,69 @@ function App() {
       seekAndPlay(Math.max(0, fillerSegments[idx].start - 0.1))
     }
   }
+
+  const jumpToPause = (direction: 'next' | 'prev') => {
+    if (!pauseSegments.length) return
+    let currentTime = activePlayTime
+    if (ytPlayer && typeof ytPlayer.getCurrentTime === 'function') {
+      try { currentTime = ytPlayer.getCurrentTime() || activePlayTime } catch {}
+    } else if (playbackRef.current) {
+      currentTime = playbackRef.current.currentTime || activePlayTime
+    }
+
+    if (direction === 'next') {
+      const nextIndex = pauseSegments.findIndex((p) => p.start > currentTime + 0.3)
+      const idx = nextIndex !== -1 ? nextIndex : 0
+      seekAndPlay(Math.max(0, pauseSegments[idx].start))
+    } else {
+      const prevPauses = pauseSegments.filter((p) => p.start < currentTime - 0.5)
+      const idx = prevPauses.length ? pauseSegments.indexOf(prevPauses[prevPauses.length - 1]) : pauseSegments.length - 1
+      seekAndPlay(Math.max(0, pauseSegments[idx].start))
+    }
+  }
+
+  // Live time tracking for YouTube Player
+  useEffect(() => {
+    if (!activeYoutubeId && !playbackRef.current) return
+    const timer = setInterval(() => {
+      if (ytPlayer && typeof ytPlayer.getCurrentTime === 'function') {
+        try {
+          const t = ytPlayer.getCurrentTime()
+          if (typeof t === 'number' && !isNaN(t)) {
+            setActivePlayTime(t)
+          }
+        } catch {}
+      }
+    }, 250)
+    return () => clearInterval(timer)
+  }, [activeYoutubeId, ytPlayer])
+
+  // Global Keyboard Navigation for Sniper
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return
+      }
+
+      if (e.altKey && e.key === 'ArrowRight') {
+        e.preventDefault()
+        jumpToFiller('next')
+      } else if (e.altKey && e.key === 'ArrowLeft') {
+        e.preventDefault()
+        jumpToFiller('prev')
+      } else if (e.altKey && e.key === 'ArrowDown') {
+        e.preventDefault()
+        jumpToPause('next')
+      } else if (e.altKey && e.key === 'ArrowUp') {
+        e.preventDefault()
+        jumpToPause('prev')
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [fillerSegments, pauseSegments, activePlayTime, ytPlayer])
 
   useEffect(() => {
     if (!isSupercutActive || !fillerSegments.length) return
@@ -2041,19 +2146,32 @@ ${advice.summary}
                     )
                   })()}
 
-                  <div className="waveform-bar-card">
+                  <div className="waveform-bar-card sniper-card">
                     <div className="timeline-header-flex">
-                      <div className="section-label">Interaktive Füllwort-Timeline & Player</div>
-                      {currentMediaTitle && (
-                        <div className="media-pill-tag" title={currentMediaTitle}>
-                          <span className="pill-dot">●</span>
-                          <span className="pill-text">{currentMediaTitle}</span>
-                        </div>
-                      )}
+                      <div className="section-label">🎯 Füllwort- & Pausen-Sniper</div>
+                      <div className="sniper-header-pills">
+                        {fillerSegments.length > 0 && (
+                          <span className="sniper-status-pill filler">
+                            🔴 Füllwort {currentFillerIndex >= 0 ? currentFillerIndex + 1 : 0}/{fillerSegments.length}
+                          </span>
+                        )}
+                        {pauseSegments.length > 0 && (
+                          <span className="sniper-status-pill pause">
+                            ⏱️ Pause {currentPauseIndex >= 0 ? currentPauseIndex + 1 : 0}/{pauseSegments.length}
+                          </span>
+                        )}
+                        {currentMediaTitle && (
+                          <div className="media-pill-tag" title={currentMediaTitle}>
+                            <span className="pill-dot">●</span>
+                            <span className="pill-text">{currentMediaTitle}</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
+
                     <div
                       className="waveform-timeline"
-                      title="Klicke auf eine Stelle, um dorthin zu springen"
+                      title="Klicke auf die Timeline, um direkt dorthin zu springen"
                       onClick={(e) => {
                         if (!result?.duration) return
                         const rect = e.currentTarget.getBoundingClientRect()
@@ -2063,6 +2181,22 @@ ${advice.summary}
                       }}
                     >
                       <div className="timeline-track" />
+
+                      {/* Pauses markers */}
+                      {pauseSegments.map((p) => {
+                        const leftPercent = (p.start / (result.duration || 1)) * 100
+                        const widthPercent = Math.max(0.8, (p.duration / (result.duration || 1)) * 100)
+                        return (
+                          <div
+                            key={p.id}
+                            className="timeline-pause-marker"
+                            style={{ left: `${leftPercent}%`, width: `${widthPercent}%` }}
+                            title={`Pause (${p.duration.toFixed(1)}s) bei ${formatTimestamp(p.start)} - ${formatTimestamp(p.end)}`}
+                          />
+                        )
+                      })}
+
+                      {/* Filler markers */}
                       {fillerSegments.map((seg) => {
                         const leftPercent = (seg.start / (result.duration || 1)) * 100
                         const widthPercent = Math.max(0.6, ((seg.end - seg.start) / (result.duration || 1)) * 100)
@@ -2075,34 +2209,89 @@ ${advice.summary}
                           />
                         )
                       })}
+
+                      {/* Interactive Playhead Needle */}
+                      {result?.duration && result.duration > 0 && (
+                        <div
+                          className="timeline-playhead"
+                          style={{ left: `${Math.min(100, Math.max(0, (activePlayTime / result.duration) * 100))}%` }}
+                          title={`Aktuelle Wiedergabe: ${formatTimestamp(activePlayTime)}`}
+                        />
+                      )}
                     </div>
 
-                    <div className="player-extra-controls">
-                      <button
-                        type="button"
-                        className="player-control-button"
-                        onClick={() => jumpToFiller('prev')}
-                        disabled={!fillerSegments.length}
-                      >
-                        ⏮️ Vorheriges Füllwort
-                      </button>
-                      <button
-                        type="button"
-                        className="player-control-button"
-                        onClick={() => jumpToFiller('next')}
-                        disabled={!fillerSegments.length}
-                      >
-                        ⏭️ Nächstes Füllwort
-                      </button>
-                      <button
-                        type="button"
-                        className={isSupercutActive ? 'player-control-button active' : 'player-control-button'}
-                        onClick={() => setIsSupercutActive(!isSupercutActive)}
-                        disabled={!fillerSegments.length}
-                      >
-                        🎧 {isSupercutActive ? 'Supercut beenden' : 'Füllwort-Supercut abspielen'}
-                      </button>
+                    <div className="sniper-controls-grid">
+                      <div className="sniper-row">
+                        <span className="sniper-row-label">🔴 Füllwörter:</span>
+                        <div className="sniper-btn-group">
+                          <button
+                            type="button"
+                            className="player-control-button"
+                            onClick={() => jumpToFiller('prev')}
+                            disabled={!fillerSegments.length}
+                            title="Tastenkürzel: Alt + Pfeil links"
+                          >
+                            ⏮️ Vorheriges
+                          </button>
+                          <span className="sniper-counter-badge">
+                            {currentFillerIndex >= 0 ? currentFillerIndex + 1 : 0} / {fillerSegments.length}
+                          </span>
+                          <button
+                            type="button"
+                            className="player-control-button"
+                            onClick={() => jumpToFiller('next')}
+                            disabled={!fillerSegments.length}
+                            title="Tastenkürzel: Alt + Pfeil rechts"
+                          >
+                            Nächstes ⏭️
+                          </button>
+                        </div>
+                      </div>
+
+                      {pauseSegments.length > 0 && (
+                        <div className="sniper-row">
+                          <span className="sniper-row-label">⏱️ Pausen ({'>'}1.8s):</span>
+                          <div className="sniper-btn-group">
+                            <button
+                              type="button"
+                              className="player-control-button pause-btn"
+                              onClick={() => jumpToPause('prev')}
+                              disabled={!pauseSegments.length}
+                              title="Tastenkürzel: Alt + Pfeil hoch"
+                            >
+                              ⏮️ Vorherige
+                            </button>
+                            <span className="sniper-counter-badge pause">
+                              {currentPauseIndex >= 0 ? currentPauseIndex + 1 : 0} / {pauseSegments.length}
+                            </span>
+                            <button
+                              type="button"
+                              className="player-control-button pause-btn"
+                              onClick={() => jumpToPause('next')}
+                              disabled={!pauseSegments.length}
+                              title="Tastenkürzel: Alt + Pfeil runter"
+                            >
+                              Nächste ⏭️
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="sniper-row-actions">
+                        <button
+                          type="button"
+                          className={isSupercutActive ? 'player-control-button supercut-btn active' : 'player-control-button supercut-btn'}
+                          onClick={() => setIsSupercutActive(!isSupercutActive)}
+                          disabled={!fillerSegments.length}
+                        >
+                          🎧 {isSupercutActive ? 'Supercut beenden' : 'Füllwort-Supercut abspielen'}
+                        </button>
+                        <div className="keyboard-shortcut-hint" title="Navigiere blitzschnell mit der Tastatur">
+                          ⌨️ <kbd>Alt</kbd> + <kbd>←</kbd>/<kbd>→</kbd> Füllwörter · <kbd>Alt</kbd> + <kbd>↑</kbd>/<kbd>↓</kbd> Pausen
+                        </div>
+                      </div>
                     </div>
+
                     {isSupercutActive && fillerSegments.length > 0 && (
                       <div className="supercut-badge">
                         ⚡ Supercut läuft: Füllwort {supercutCurrentIndex + 1} von {fillerSegments.length}
@@ -2184,7 +2373,15 @@ ${advice.summary}
                       )}
                     </div>
 
-                    {file && <audio className="playback" ref={playbackRef} src={playbackUrl} controls />}
+                    {file && (
+                      <audio
+                        className="playback"
+                        ref={playbackRef}
+                        src={playbackUrl}
+                        controls
+                        onTimeUpdate={(e) => setActivePlayTime(e.currentTarget.currentTime)}
+                      />
+                    )}
 
                     <div className="transcript-list">
                       {(result.segments || [])

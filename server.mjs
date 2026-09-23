@@ -80,11 +80,18 @@ const analysisResultCache = new Map()
 const MAX_CACHE_ENTRIES = 200
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000 // 24 hours
 
+const getYouTubeVideoId = (url) => {
+  if (!url) return null
+  const match = String(url).match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/|live\/))([\w-]{11})/)
+  return match ? match[1] : null
+}
+
 const getCacheKey = (url, words) => {
   if (!url) return null
-  const normalizedUrl = String(url).trim().toLowerCase()
+  const ytId = getYouTubeVideoId(url)
+  const normalizedSource = ytId ? `yt:${ytId}` : String(url).trim().toLowerCase()
   const normalizedWords = [...words].map((w) => String(w).trim().toLowerCase()).sort().join(',')
-  return `${normalizedUrl}:::${normalizedWords}`
+  return `${normalizedSource}:::${normalizedWords}`
 }
 
 const getFromCache = (url, words) => {
