@@ -106,6 +106,12 @@ const ensureMultiSpeakerDiarization = (resultData: Result, wordsList: string[]):
   let isMultiSpeaker = usePitchClustering
   let speakerTurnCount = 0
 
+  // Pre-compile word regexes once for all segments
+  const compiledWordRegexes = wordsList.map((w) => ({
+    word: w,
+    regex: new RegExp(`\\b${w.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}\\b`, 'gi'),
+  }))
+
   const enrichedSegments = rawSegments.map((s, idx) => {
     const segPitch = Number(s.pitch || 0)
     const cleanedText = cleanHallucinatedRepetitions(s.text)
@@ -137,13 +143,12 @@ const ensureMultiSpeakerDiarization = (resultData: Result, wordsList: string[]):
     const speakerId = isMultiSpeaker ? `speaker_${currentSpeakerIdx + 1}` : (s.speakerId || 'speaker_1')
     const speakerName = s.speakerName && s.speakerName !== 'Sprecher 1' ? s.speakerName : (speakerId === 'speaker_1' ? 'Sprecher 1' : 'Sprecher 2')
 
-    // Recalculate segment counts based on cleaned text
     const segCounts: Record<string, number> = {}
-    wordsList.forEach((w) => {
-      const regex = new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi')
+    for (const { word, regex } of compiledWordRegexes) {
+      regex.lastIndex = 0
       const matches = cleanedText.match(regex)
-      segCounts[w] = matches ? matches.length : 0
-    })
+      segCounts[word] = matches ? matches.length : 0
+    }
 
     return {
       ...s,

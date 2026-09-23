@@ -17,10 +17,22 @@ def estimate_segment_pitch(audio_segment: np.ndarray, sr: int = 16000) -> float:
     min_lag = int(sr / 380)  # ~42 samples (380 Hz)
     max_lag = int(sr / 75)   # ~213 samples (75 Hz)
 
+    total_possible_frames = (len(audio_segment) - frame_size) // hop_size
+    if total_possible_frames <= 0:
+        return 0.0
+
+    # Sample up to 16 representative frames evenly across the segment
+    max_frames = 16
+    if total_possible_frames > max_frames:
+        step = total_possible_frames / max_frames
+        frame_starts = [int(i * step) * hop_size for i in range(max_frames)]
+    else:
+        frame_starts = range(0, len(audio_segment) - frame_size, hop_size)
+
     pitches = []
-    for i in range(0, len(audio_segment) - frame_size, hop_size):
-        frame = audio_segment[i:i + frame_size].astype(np.float32)
-        frame = frame - np.mean(frame)
+    for start_idx in frame_starts:
+        frame = audio_segment[start_idx:start_idx + frame_size].astype(np.float32)
+        frame -= np.mean(frame)
         energy = np.sum(frame ** 2)
         if energy < 1e-4:
             continue
@@ -34,8 +46,7 @@ def estimate_segment_pitch(audio_segment: np.ndarray, sr: int = 16000) -> float:
         peak_idx = int(np.argmax(search_window)) + min_lag
         peak_val = corr[peak_idx]
         if corr[0] > 0 and (peak_val / corr[0]) > 0.32:  # Voiced frame threshold
-            freq = sr / peak_idx
-            pitches.append(freq)
+            pitches.append(sr / peak_idx)
 
     if len(pitches) >= 2:
         return float(np.median(pitches))

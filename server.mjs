@@ -246,9 +246,11 @@ const getUrlMetadata = async (url) => {
   }
 }
 
+const tokenizeText = (text) => String(text || '').toLocaleLowerCase('de-DE').match(/[\p{L}\p{N}]+/gu) || []
+
 const countWordOccurrences = (text, word) => {
-  const tokens = text.toLocaleLowerCase('de-DE').match(/[\p{L}\p{N}]+/gu) || []
-  const searchTokens = word.toLocaleLowerCase('de-DE').match(/[\p{L}\p{N}]+/gu) || []
+  const tokens = tokenizeText(text)
+  const searchTokens = tokenizeText(word)
   if (!searchTokens.length) return 0
 
   let matches = 0
@@ -258,7 +260,23 @@ const countWordOccurrences = (text, word) => {
   return matches
 }
 
-const countSegmentWords = (text, words) => Object.fromEntries(words.map((word) => [word, countWordOccurrences(text, word)]))
+const countSegmentWords = (text, words) => {
+  const tokens = tokenizeText(text)
+  const result = {}
+  for (const word of words) {
+    const searchTokens = tokenizeText(word)
+    if (!searchTokens.length) {
+      result[word] = 0
+      continue
+    }
+    let matches = 0
+    for (let index = 0; index <= tokens.length - searchTokens.length; index += 1) {
+      if (searchTokens.every((token, offset) => tokens[index + offset] === token)) matches += 1
+    }
+    result[word] = matches
+  }
+  return result
+}
 
 const getPhraseOverlap = (words, counts) => {
   const singleWordsSet = new Set(
