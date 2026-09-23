@@ -507,6 +507,9 @@ function App() {
 
   const activeYoutubeId = useMemo(() => getYouTubeVideoId(activeSourceUrl), [activeSourceUrl])
 
+  const ytPlayerRef = useRef<any>(null)
+  const isYtReadyRef = useRef<boolean>(false)
+
   useEffect(() => {
     if (typeof window !== 'undefined' && !window.YT) {
       const tag = document.createElement('script')
@@ -518,25 +521,33 @@ function App() {
   useEffect(() => {
     if (!activeYoutubeId) {
       setYtPlayer(null)
+      ytPlayerRef.current = null
+      isYtReadyRef.current = false
       return
     }
 
     let isMounted = true
     let playerInstance: any = null
-    let attempts = 0
+    let connected = false
 
     const tryConnect = () => {
-      if (!isMounted) return false
+      if (!isMounted || connected) return true
       const el = document.getElementById('youtube-sync-iframe')
       if (el && window.YT && window.YT.Player) {
         try {
+          connected = true
           playerInstance = new window.YT.Player('youtube-sync-iframe', {
             events: {
               onReady: (event: any) => {
-                if (isMounted) setYtPlayer(event.target)
+                if (isMounted) {
+                  isYtReadyRef.current = true
+                  ytPlayerRef.current = event.target
+                  setYtPlayer(event.target)
+                }
               },
               onStateChange: (event: any) => {
                 if (event?.target && isMounted) {
+                  ytPlayerRef.current = event.target
                   setYtPlayer(event.target)
                 }
               },
@@ -544,12 +555,14 @@ function App() {
           })
           return true
         } catch (err) {
+          connected = false
           console.warn('YouTube Player Connect Attempt:', err)
         }
       }
       return false
     }
 
+    let attempts = 0
     const interval = setInterval(() => {
       attempts++
       if (tryConnect() || attempts > 30) {
@@ -568,6 +581,8 @@ function App() {
     return () => {
       isMounted = false
       clearInterval(interval)
+      isYtReadyRef.current = false
+      ytPlayerRef.current = null
       if (playerInstance && typeof playerInstance.destroy === 'function') {
         try { playerInstance.destroy() } catch {}
       }
@@ -627,21 +642,26 @@ function App() {
   const seekAndPlay = (seconds: number) => {
     const target = Math.max(0, seconds)
     setActivePlayTime(target)
-    if (ytPlayer && typeof ytPlayer.seekTo === 'function') {
+
+    // 1. YouTube IFrame API if ready
+    const player = ytPlayerRef.current || ytPlayer
+    if (isYtReadyRef.current && player && typeof player.seekTo === 'function') {
       try {
-        ytPlayer.seekTo(target, true)
-        if (typeof ytPlayer.playVideo === 'function') ytPlayer.playVideo()
+        player.seekTo(target, true)
+        if (typeof player.playVideo === 'function') player.playVideo()
       } catch {}
-    } else {
-      const iframe = document.getElementById('youtube-sync-iframe') as HTMLIFrameElement | null
-      if (iframe && iframe.contentWindow) {
-        try {
-          iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [target, true] }), '*')
-          iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*')
-        } catch {}
-      }
     }
 
+    // 2. Direct postMessage fallback (ensures control even before onReady or across frames)
+    const iframe = document.getElementById('youtube-sync-iframe') as HTMLIFrameElement | null
+    if (iframe && iframe.contentWindow) {
+      try {
+        iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [target, true] }), '*')
+        iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*')
+      } catch {}
+    }
+
+    // 3. Local audio element
     if (playbackRef.current) {
       playbackRef.current.currentTime = target
       void playbackRef.current.play()
@@ -651,8 +671,9 @@ function App() {
   const jumpToFiller = (direction: 'next' | 'prev') => {
     if (!fillerSegments.length) return
     let currentTime = activePlayTime
-    if (ytPlayer && typeof ytPlayer.getCurrentTime === 'function') {
-      try { currentTime = ytPlayer.getCurrentTime() || activePlayTime } catch {}
+    const player = ytPlayerRef.current || ytPlayer
+    if (player && typeof player.getCurrentTime === 'function') {
+      try { currentTime = player.getCurrentTime() || activePlayTime } catch {}
     } else if (playbackRef.current) {
       currentTime = playbackRef.current.currentTime || activePlayTime
     }
@@ -673,8 +694,9 @@ function App() {
   const jumpToPause = (direction: 'next' | 'prev') => {
     if (!pauseSegments.length) return
     let currentTime = activePlayTime
-    if (ytPlayer && typeof ytPlayer.getCurrentTime === 'function') {
-      try { currentTime = ytPlayer.getCurrentTime() || activePlayTime } catch {}
+    const player = ytPlayerRef.current || ytPlayer
+    if (player && typeof player.getCurrentTime === 'function') {
+      try { currentTime = player.getCurrentTime() || activePlayTime } catch {}
     } else if (playbackRef.current) {
       currentTime = playbackRef.current.currentTime || activePlayTime
     }
@@ -694,9 +716,10 @@ function App() {
   useEffect(() => {
     if (!activeYoutubeId && !playbackRef.current) return
     const timer = setInterval(() => {
-      if (ytPlayer && typeof ytPlayer.getCurrentTime === 'function') {
+      const player = ytPlayerRef.current || ytPlayer
+      if (player && typeof player.getCurrentTime === 'function') {
         try {
-          const t = ytPlayer.getCurrentTime()
+          const t = player.getCurrentTime()
           if (typeof t === 'number' && !isNaN(t)) {
             setActivePlayTime(t)
           }
@@ -704,7 +727,7 @@ function App() {
       }
     }, 250)
     return () => clearInterval(timer)
-  }, [activeYoutubeId, ytPlayer])
+  }, [activeYoutubeId])
 
   // Global Keyboard Navigation for Sniper
   useEffect(() => {
@@ -731,7 +754,7 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [fillerSegments, pauseSegments, activePlayTime, ytPlayer])
+  }, [fillerSegments, pauseSegments, activePlayTime])
 
   useEffect(() => {
     if (!isSupercutActive || !fillerSegments.length) return
@@ -786,8 +809,9 @@ function App() {
     // Watch real-time playback position
     pollTimer = setInterval(() => {
       let currentTime = 0
-      if (ytPlayer && typeof ytPlayer.getCurrentTime === 'function') {
-        try { currentTime = ytPlayer.getCurrentTime() || 0 } catch {}
+      const player = ytPlayerRef.current || ytPlayer
+      if (player && typeof player.getCurrentTime === 'function') {
+        try { currentTime = player.getCurrentTime() || 0 } catch {}
       } else if (playbackRef.current) {
         currentTime = playbackRef.current.currentTime || 0
       }
@@ -805,7 +829,7 @@ function App() {
       if (snippetTimer) clearTimeout(snippetTimer)
       if (pollTimer) clearInterval(pollTimer)
     }
-  }, [isSupercutActive, fillerSegments, ytPlayer])
+  }, [isSupercutActive, fillerSegments])
 
   const downloadCleanAudio = async () => {
     if (!result) return
@@ -2568,7 +2592,7 @@ ${advice.summary}
                         <iframe
                           id="youtube-sync-iframe"
                           key={activeYoutubeId}
-                          src={`https://www.youtube-nocookie.com/embed/${activeYoutubeId}?enablejsapi=1&version=3&rel=0&autoplay=0`}
+                          src={`https://www.youtube.com/embed/${activeYoutubeId}?enablejsapi=1&version=3&rel=0&autoplay=0&origin=${typeof window !== 'undefined' ? encodeURIComponent(window.location.origin) : ''}`}
                           title={currentMediaTitle || 'YouTube Sync Video'}
                           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                           allowFullScreen
