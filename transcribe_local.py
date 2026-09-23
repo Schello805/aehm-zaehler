@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -81,7 +82,6 @@ def main() -> None:
     segment_data = []
     text_parts = []
     for segment in segments:
-        text_parts.append(segment.text)
         pitch = 0.0
         if audio_samples is not None:
             start_samp = max(0, int(segment.start * 16000))
@@ -89,10 +89,13 @@ def main() -> None:
             if end_samp > start_samp:
                 pitch = estimate_segment_pitch(audio_samples[start_samp:end_samp], sr=16000)
 
+        cleaned_text = re.sub(r'\b(\w+)(?:\s+\1){2,}\b', r'\1 \1', segment.text, flags=re.IGNORECASE).strip()
+        text_parts.append(cleaned_text)
+
         s_obj = {
             'start': segment.start,
             'end': segment.end,
-            'text': segment.text.strip(),
+            'text': cleaned_text,
             'pitch': round(pitch, 1),
         }
         segment_data.append(s_obj)

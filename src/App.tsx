@@ -64,14 +64,12 @@ type Result = {
   totalPauseSeconds?: number
 }
 
+const cleanHallucinatedRepetitions = (text: string): string => {
+  return String(text || '').replace(/\b(\w+)(?:\s+\1){2,}\b/gi, '$1 $1').trim()
+}
+
 const ensureMultiSpeakerDiarization = (resultData: Result, wordsList: string[]): Result => {
   if (!resultData || !resultData.segments || resultData.segments.length === 0) return resultData
-
-  // If already has 2+ distinct speakers with actual speech, keep
-  if (resultData.speakers && Object.keys(resultData.speakers).length > 1) {
-    const populated = Object.values(resultData.speakers).filter((s) => s.totalWords > 0)
-    if (populated.length > 1) return resultData
-  }
 
   const rawSegments = resultData.segments
   const validPitches = rawSegments
@@ -82,6 +80,7 @@ const ensureMultiSpeakerDiarization = (resultData: Result, wordsList: string[]):
   let usePitchClustering = false
   let pitchCenter1 = 0
   let pitchCenter2 = 0
+  let pitchThreshold = 165
 
   if (validPitches.length >= 4) {
     const q25 = validPitches[Math.floor(validPitches.length * 0.25)]
@@ -94,6 +93,7 @@ const ensureMultiSpeakerDiarization = (resultData: Result, wordsList: string[]):
       const upperHalf = validPitches.slice(Math.floor(validPitches.length / 2))
       pitchCenter1 = lowerHalf[Math.floor(lowerHalf.length / 2)] || q25
       pitchCenter2 = upperHalf[Math.floor(upperHalf.length / 2)] || q75
+      pitchThreshold = (pitchCenter1 + pitchCenter2) / 2
     }
   }
 
@@ -108,91 +108,99 @@ const ensureMultiSpeakerDiarization = (resultData: Result, wordsList: string[]):
 
   const enrichedSegments = rawSegments.map((s, idx) => {
     const segPitch = Number(s.pitch || 0)
-    if (usePitchClustering && segPitch >= 75 && segPitch <= 360) {
-      const dist1 = Math.abs(segPitch - pitchCenter1)
-      const dist2 = Math.abs(segPitch - pitchCenter2)
-      const decidedIdx = dist1 <= dist2 ? 0 : 1
-      if (decidedIdx !== currentSpeakerIdx) {
-        currentSpeakerIdx = decidedIdx
-        speakerTurnCount++
+    const cleanedText = cleanHallucinatedRepetitions(s.text)
+
+    if (usePitchClustering) {
+      if (segPitch >= 75 && segPitch <= 360) {
+        const decidedIdx = segPitch < pitchThreshold ? 0 : 1
+        if (decidedIdx !== currentSpeakerIdx) {
+          currentSpeakerIdx = decidedIdx
+          speakerTurnCount++
+        }
       }
+      // Keep previous speaker for unvoiced/silent frames (never toggle on pure pauses)
     } else if (idx > 0) {
       const prevEnd = Number(rawSegments[idx - 1].end || 0)
       const prevText = String(rawSegments[idx - 1].text || '').trim()
-      const segText = String(s.text || '').trim()
       const gap = Number(s.start || 0) - prevEnd
 
       const prevHasQuestion = prevText.endsWith('?')
-      const currentHasTurnCue = turnMarkers[0].test(segText)
+      const currentHasTurnCue = turnMarkers[0].test(cleanedText)
       
-      if (gap >= 0.9 || (gap >= 0.35 && (prevHasQuestion || currentHasTurnCue))) {
+      if (gap >= 2.5 && (prevHasQuestion || currentHasTurnCue)) {
         currentSpeakerIdx = currentSpeakerIdx === 0 ? 1 : 0
         speakerTurnCount++
         isMultiSpeaker = true
       }
     }
 
-    const speakerId = isMultiSpeaker ? `speaker_${currentSpeakerIdx + 1}` : 'speaker_1'
+    const speakerId = isMultiSpeaker ? `speaker_${currentSpeakerIdx + 1}` : (s.speakerId || 'speaker_1')
     const speakerName = s.speakerName && s.speakerName !== 'Sprecher 1' ? s.speakerName : (speakerId === 'speaker_1' ? 'Sprecher 1' : 'Sprecher 2')
+
+    // Recalculate segment counts based on cleaned text
+    const segCounts: Record<string, number> = {}
+    wordsList.forEach((w) => {
+      const regex = new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi')
+      const matches = cleanedText.match(regex)
+      segCounts[w] = matches ? matches.length : 0
+    })
 
     return {
       ...s,
+      text: cleanedText,
+      counts: segCounts,
       speakerId,
       speakerName,
     }
   })
 
-  if (isMultiSpeaker || speakerTurnCount > 0) {
-    const colors = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ec4899', '#06b6d4']
-    const speakers: Record<string, SpeakerStats> = {}
-    enrichedSegments.forEach((s) => {
-      const spId = s.speakerId || 'speaker_1'
-      if (!speakers[spId]) {
-        const idx = spId === 'speaker_1' ? 0 : 1
-        speakers[spId] = {
-          id: spId,
-          name: s.speakerName || `Sprecher ${idx + 1}`,
-          color: colors[idx % colors.length],
-          totalWords: 0,
-          fillerWords: 0,
-          baseFillerWords: 0,
-          relativeRate: 0,
-          duration: 0,
-          wpm: 0,
-          counts: Object.fromEntries(wordsList.map((w) => [w, 0])),
-        }
+  const colors = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ec4899', '#06b6d4']
+  const speakers: Record<string, SpeakerStats> = {}
+  enrichedSegments.forEach((s) => {
+    const spId = s.speakerId || 'speaker_1'
+    if (!speakers[spId]) {
+      const idx = spId === 'speaker_1' ? 0 : (spId === 'speaker_2' ? 1 : Object.keys(speakers).length)
+      speakers[spId] = {
+        id: spId,
+        name: s.speakerName || `Sprecher ${idx + 1}`,
+        color: colors[idx % colors.length],
+        totalWords: 0,
+        fillerWords: 0,
+        baseFillerWords: 0,
+        relativeRate: 0,
+        duration: 0,
+        wpm: 0,
+        counts: Object.fromEntries(wordsList.map((w) => [w, 0])),
       }
-
-      const wordsInSeg = s.text.trim() ? s.text.trim().split(/\s+/).length : 0
-      const segDur = Math.max(0, s.end - s.start)
-      speakers[spId].totalWords += wordsInSeg
-      speakers[spId].duration += segDur
-
-      if (s.counts) {
-        Object.entries(s.counts).forEach(([w, count]) => {
-          if (speakers[spId].counts[w] !== undefined) {
-            speakers[spId].counts[w] += Number(count)
-          }
-        })
-      }
-    })
-
-    Object.values(speakers).forEach((sp) => {
-      sp.fillerWords = Object.values(sp.counts).reduce((a, b) => a + b, 0)
-      sp.baseFillerWords = sp.fillerWords
-      sp.relativeRate = sp.totalWords > 0 ? (sp.fillerWords / sp.totalWords) * 100 : 0
-      sp.wpm = sp.duration > 0 ? Math.round((sp.totalWords / (sp.duration / 60))) : 0
-      sp.duration = Math.round(sp.duration * 10) / 10
-    })
-
-    return {
-      ...resultData,
-      segments: enrichedSegments,
-      speakers,
     }
-  }
 
-  return resultData
+    const wordsInSeg = s.text.trim() ? s.text.trim().split(/\s+/).length : 0
+    const segDur = Math.max(0, s.end - s.start)
+    speakers[spId].totalWords += wordsInSeg
+    speakers[spId].duration += segDur
+
+    if (s.counts) {
+      Object.entries(s.counts).forEach(([w, count]) => {
+        if (speakers[spId].counts[w] !== undefined) {
+          speakers[spId].counts[w] += Number(count)
+        }
+      })
+    }
+  })
+
+  Object.values(speakers).forEach((sp) => {
+    sp.fillerWords = Object.values(sp.counts).reduce((a, b) => a + b, 0)
+    sp.baseFillerWords = sp.fillerWords
+    sp.relativeRate = sp.totalWords > 0 ? (sp.fillerWords / sp.totalWords) * 100 : 0
+    sp.wpm = sp.duration > 0 ? Math.round((sp.totalWords / (sp.duration / 60))) : 0
+    sp.duration = Math.round(sp.duration * 10) / 10
+  })
+
+  return {
+    ...resultData,
+    segments: enrichedSegments,
+    speakers,
+  }
 }
 
 type ProgressState = {

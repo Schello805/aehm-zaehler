@@ -308,6 +308,10 @@ const extractSpeakerNamesFromTranscript = (segments) => {
   return detected
 }
 
+const cleanHallucinatedRepetitions = (text) => {
+  return String(text || '').replace(/\b(\w+)(?:\s+\1){2,}\b/gi, '$1 $1').trim()
+}
+
 const performSpeakerDiarization = (rawSegments, words) => {
   if (!rawSegments || !rawSegments.length) return { segments: [], speakers: {} }
 
@@ -324,6 +328,7 @@ const performSpeakerDiarization = (rawSegments, words) => {
   let usePitchClustering = false
   let pitchCenter1 = 0
   let pitchCenter2 = 0
+  let pitchThreshold = 165
 
   if (validPitches.length >= 4) {
     const q25 = validPitches[Math.floor(validPitches.length * 0.25)]
@@ -336,7 +341,8 @@ const performSpeakerDiarization = (rawSegments, words) => {
       const upperHalf = validPitches.slice(Math.floor(validPitches.length / 2))
       pitchCenter1 = lowerHalf[Math.floor(lowerHalf.length / 2)] || q25
       pitchCenter2 = upperHalf[Math.floor(upperHalf.length / 2)] || q75
-      console.log(`[Diarization] Detected 2 distinct voice pitch clusters: ${pitchCenter1.toFixed(1)} Hz vs ${pitchCenter2.toFixed(1)} Hz (Spread: ${spread.toFixed(1)} Hz)`)
+      pitchThreshold = (pitchCenter1 + pitchCenter2) / 2
+      console.log(`[Diarization] Detected 2 distinct voice pitch clusters: ${pitchCenter1.toFixed(1)} Hz vs ${pitchCenter2.toFixed(1)} Hz (Threshold: ${pitchThreshold.toFixed(1)} Hz, Spread: ${spread.toFixed(1)} Hz)`)
     }
   }
 
@@ -354,21 +360,22 @@ const performSpeakerDiarization = (rawSegments, words) => {
   rawSegments.forEach((s, idx) => {
     const segStart = Number(s.start || 0)
     const segEnd = Number(s.end || 0)
-    const segText = String(s.text || '').trim()
+    const segText = cleanHallucinatedRepetitions(s.text)
     const segPitch = Number(s.pitch || 0)
     const segWordCount = segText ? segText.split(/\s+/).length : 0
     const segDurationMin = Math.max(0.01, (segEnd - segStart) / 60)
     const wpm = Math.round(segWordCount / segDurationMin)
 
-    if (usePitchClustering && segPitch >= 75 && segPitch <= 360) {
-      const dist1 = Math.abs(segPitch - pitchCenter1)
-      const dist2 = Math.abs(segPitch - pitchCenter2)
-      const decidedIdx = dist1 <= dist2 ? 0 : 1
-      if (decidedIdx !== currentSpeakerIdx) {
-        currentSpeakerIdx = decidedIdx
-        speakerTurnCount++
+    if (usePitchClustering) {
+      if (segPitch >= 75 && segPitch <= 360) {
+        const decidedIdx = segPitch < pitchThreshold ? 0 : 1
+        if (decidedIdx !== currentSpeakerIdx) {
+          currentSpeakerIdx = decidedIdx
+          speakerTurnCount++
+        }
       }
-    } else if (idx > 0) {
+      // If unvoiced/pitch 0: preserve currentSpeakerIdx (do NOT alternate on pauses)
+    } else if (detectedNames.length > 1 && idx > 0) {
       const prevEnd = Number(rawSegments[idx - 1].end || 0)
       const prevText = String(rawSegments[idx - 1].text || '').trim()
       const gap = segStart - prevEnd
@@ -376,7 +383,7 @@ const performSpeakerDiarization = (rawSegments, words) => {
       const prevHasQuestion = prevText.endsWith('?')
       const currentHasTurnCue = turnMarkers[0].test(segText)
       
-      if (gap >= 0.9 || (gap >= 0.35 && (prevHasQuestion || currentHasTurnCue))) {
+      if (gap >= 2.0 && (prevHasQuestion || currentHasTurnCue)) {
         currentSpeakerIdx = currentSpeakerIdx === 0 ? 1 : 0
         speakerTurnCount++
         isMultiSpeaker = true
