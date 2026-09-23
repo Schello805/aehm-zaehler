@@ -1689,78 +1689,98 @@ h2 {
 
 .word-list {
   border-top: 1px solid var(--line);
+  max-height: 420px;
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
 
 .word-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 62px;
+  min-height: 38px;
+  padding: 4px 6px;
   border-bottom: 1px solid var(--line);
+  transition: background 0.15s ease;
+}
+
+.word-row:hover {
+  background: rgba(0, 0, 0, 0.015);
 }
 
 .word-label {
   color: var(--ink);
   font-family: 'Outfit', sans-serif;
-  font-size: 21px;
+  font-size: 15px;
   font-weight: 600;
 }
 
 .row-actions {
   display: flex;
-  gap: 5px;
+  gap: 6px;
 }
 
 .icon-button {
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
   border: 1px solid var(--line);
-  background: transparent;
+  background: var(--panel);
   color: var(--muted);
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   transition: border-color 0.18s ease, color 0.18s ease, background 0.18s ease;
 }
 
 .icon-button:hover {
   border-color: var(--red);
   color: var(--red);
+  background: var(--red-soft);
 }
 
 .edit-input,
 .add-word input {
   min-width: 0;
   border: 0;
-  border-bottom: 1px solid var(--red);
+  border-bottom: 1.5px solid var(--red);
   background: transparent;
   color: var(--ink);
-  font-size: 16px;
-  padding: 8px 0;
+  font-size: 14px;
+  padding: 6px 0;
   outline: 0;
 }
 
 .add-word {
   display: flex;
-  gap: 12px;
-  padding-top: 24px;
+  gap: 10px;
+  padding-top: 14px;
+  align-items: center;
 }
 
 .add-word input { flex: 1; }
 
 .add-word button {
-  min-height: 45px;
+  min-height: 38px;
   border-radius: 8px;
   border: 0;
-  padding: 0 14px;
+  padding: 0 16px;
   background: var(--ink);
   color: white;
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: background 0.2s ease;
 }
 
 .add-word button:hover { background: var(--red); }
 
 .add-word button span {
-  margin-left: 10px;
-  font-size: 18px;
+  font-size: 16px;
 }
 
 /* Füllwort-Eraser Card & Interactive Player Controls */
