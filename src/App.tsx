@@ -1065,6 +1065,17 @@ function LiveStudio({ words }: { words: string[] }) {
   const particlesRef = useRef<Array<{ x: number; y: number; vx: number; vy: number; alpha: number; color: string }>>([])
   const particleAnimRef = useRef<number | null>(null)
   const counterRef = useRef<HTMLSpanElement | null>(null)
+  const transcriptBoxRef = useRef<HTMLDivElement | null>(null)
+  // Persistent filler counts that survive Web Speech API finalization (which strips filler words like 'äh')
+  const finalFillerCountsRef = useRef<Record<string, number>>({})
+  // Last interim transcript text to detect new filler words as they appear
+  const lastInterimRef = useRef<string>('')
+
+  // Auto-scroll transcript box to bottom on new content
+  useEffect(() => {
+    const box = transcriptBoxRef.current
+    if (box) box.scrollTop = box.scrollHeight
+  }, [liveTranscript])
 
   // Track whether counter popped this cycle
   const popCounterAnimation = () => {
@@ -1299,18 +1310,28 @@ function LiveStudio({ words }: { words: string[] }) {
       recognition.lang = 'de-DE'
 
       recognition.onresult = (event: any) => {
-        let currentTranscript = ''
+        // Separate final from interim text
+        // The Web Speech API (de-DE) strips filler words like 'äh'/'ähm' from FINAL results.
+        // We must detect them in INTERIM results and persist the counts ourselves.
+        let finalText = ''
+        let interimText = ''
+
         for (let i = 0; i < event.results.length; i++) {
-          currentTranscript += event.results[i][0].transcript
+          if (event.results[i].isFinal) {
+            finalText += event.results[i][0].transcript + ' '
+          } else {
+            interimText += event.results[i][0].transcript
+          }
         }
 
-        setLiveTranscript(currentTranscript)
+        // Display: final + current interim
+        const displayText = finalText + interimText
+        setLiveTranscript(displayText)
 
-        const lowerText = currentTranscript.toLowerCase()
-        const tokens = lowerText.match(/[\p{L}\p{N}]+/gu) || []
-
-        if (tokens.length > 0 && elapsedSeconds > 0) {
-          const wpm = Math.round((tokens.length / elapsedSeconds) * 60)
+        // WPM is computed from total word count
+        const totalTokens = displayText.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []
+        if (totalTokens.length > 0 && elapsedSeconds > 0) {
+          const wpm = Math.round((totalTokens.length / elapsedSeconds) * 60)
           setSpeechPace(wpm)
           setWpmHistory((prev) => {
             const next = [...prev, wpm]
@@ -1318,24 +1339,60 @@ function LiveStudio({ words }: { words: string[] }) {
           })
         }
 
-        let totalFiller = 0
-        const counts: Record<string, number> = {}
-
-        for (const w of words) {
-          const wTokens = w.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []
-          if (!wTokens.length) continue
-          let occurrences = 0
-          for (let i = 0; i <= tokens.length - wTokens.length; i++) {
-            if (wTokens.every((tok, offset) => tokens[i + offset] === tok)) {
-              occurrences++
+        // Helper: count filler words in any text segment
+        const countFillers = (text: string): Record<string, number> => {
+          const lower = text.toLowerCase()
+          const toks = lower.match(/[\p{L}\p{N}]+/gu) || []
+          const result: Record<string, number> = {}
+          for (const w of words) {
+            const wToks = w.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []
+            if (!wToks.length) continue
+            let count = 0
+            for (let i = 0; i <= toks.length - wToks.length; i++) {
+              if (wToks.every((tok, offset) => toks[i + offset] === tok)) count++
             }
+            if (count > 0) result[w] = count
           }
-          if (occurrences > 0) {
-            counts[w] = occurrences
-            totalFiller += occurrences
+          return result
+        }
+
+        // When a result is finalized: take the max of (final text counts, last interim counts)
+        // and store permanently. This preserves 'äh' counts that the API strips on finalization.
+        const hasNewFinal = event.results[event.resultIndex]?.isFinal
+        if (hasNewFinal) {
+          const finalCounts = countFillers(finalText)
+          // Merge: keep the higher count (interim had fillers the final lost)
+          for (const w of words) {
+            const fromFinal = finalCounts[w] || 0
+            const fromInterim = finalFillerCountsRef.current[w] || 0
+            finalFillerCountsRef.current[w] = Math.max(fromFinal, fromInterim)
+          }
+          lastInterimRef.current = ''
+        }
+
+        // Detect NEW filler words appearing in the CURRENT interim result
+        // (compared to previous interim scan) and immediately add them
+        if (interimText && interimText !== lastInterimRef.current) {
+          lastInterimRef.current = interimText
+          const interimCounts = countFillers(interimText)
+          for (const w of words) {
+            const fromInterim = interimCounts[w] || 0
+            const alreadyPersisted = finalFillerCountsRef.current[w] || 0
+            if (fromInterim > alreadyPersisted) {
+              finalFillerCountsRef.current[w] = fromInterim
+            }
           }
         }
 
+        // Build total counts = persistent (captures interim fillers) + current interim (for live display)
+        const interimCounts = countFillers(interimText)
+        const totalCounts: Record<string, number> = {}
+        for (const w of words) {
+          totalCounts[w] = Math.max(finalFillerCountsRef.current[w] || 0, interimCounts[w] || 0)
+        }
+        const totalFiller = Object.values(totalCounts).reduce((a, b) => a + b, 0)
+
+        setWordCounts(totalCounts)
         setLiveCount((prev) => {
           if (totalFiller > prev) {
             popCounterAnimation()
@@ -1343,9 +1400,8 @@ function LiveStudio({ words }: { words: string[] }) {
           }
           return totalFiller
         })
-        setWordCounts(counts)
 
-        const lastWordMatched = words.find((w) => (counts[w] || 0) > (wordCounts[w] || 0))
+        const lastWordMatched = words.find((w) => (totalCounts[w] || 0) > (wordCounts[w] || 0))
         if (lastWordMatched) {
           setLastAlert(`Füllwort erkannt: „${lastWordMatched}"! Kurz innehalten & Stimme absenken.`)
         }
@@ -1389,6 +1445,8 @@ function LiveStudio({ words }: { words: string[] }) {
     setSpeechPace(0)
     setWpmHistory([])
     setIsAmbientAlert(false)
+    finalFillerCountsRef.current = {}
+    lastInterimRef.current = ''
     particlesRef.current = []
     const ctx = particleCanvasRef.current?.getContext('2d')
     if (ctx && particleCanvasRef.current) ctx.clearRect(0, 0, particleCanvasRef.current.width, particleCanvasRef.current.height)
@@ -1490,9 +1548,9 @@ function LiveStudio({ words }: { words: string[] }) {
             ))}
           </div>
 
-          <div className="live-transcript-box">
+          <div className="live-transcript-box" ref={transcriptBoxRef}>
             <div className="section-label">Live Transkript-Stream</div>
-            <p>{liveTranscript || 'Noch keine Sprache erfasst. Klicke auf „Live-Session starten" und sprich ins Mikrofon.'}</p>
+            <p className="transcript-text">{liveTranscript || 'Noch keine Sprache erfasst. Klicke auf „Live-Session starten" und sprich ins Mikrofon.'}</p>
           </div>
         </div>
       </div>

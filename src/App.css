@@ -340,14 +340,14 @@ h2 {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  border: 1px dashed #c9c4ba;
+  border: 1px dashed var(--line);
   cursor: pointer;
   transition: border-color 0.2s ease, background 0.2s ease;
 }
 
 .dropzone:hover {
   border-color: var(--red);
-  background: rgba(191, 63, 47, 0.035);
+  background: var(--red-soft);
 }
 
 .dropzone input { display: none; }
@@ -1201,7 +1201,7 @@ h2 {
   padding: 30px;
   border: 1px solid var(--line);
   border-radius: 18px;
-  background: rgba(255,255,255,0.68);
+  background: var(--panel);
   box-shadow: 0 18px 45px rgba(24, 18, 13, 0.06);
 }
 
@@ -1226,7 +1226,7 @@ h2 {
   height: 45px;
   padding: 0 12px;
   border: 1px solid var(--line);
-  background: white;
+  background: var(--panel);
   color: var(--ink);
 }
 
@@ -1241,7 +1241,7 @@ h2 {
   height: 45px;
   padding: 0 12px;
   border: 1px solid var(--line);
-  background: white;
+  background: var(--panel);
   color: var(--ink);
 }
 
@@ -1361,7 +1361,7 @@ h2 {
   margin-top: 24px;
   padding: 20px 22px;
   border-radius: 12px;
-  background: linear-gradient(135deg, rgba(199, 91, 71, 0.08) 0%, rgba(255, 255, 255, 0.6) 100%);
+  background: var(--red-soft);
   border: 1px solid rgba(199, 91, 71, 0.25);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.02);
 }
@@ -1724,12 +1724,21 @@ h2 {
   border-radius: 10px;
   background: var(--panel);
   border: 1px solid var(--line);
-  flex: 1;
-  min-height: 120px;
-  max-height: 240px;
+  height: 80px;
   overflow-y: auto;
+  scrollbar-width: none;
   font-size: 14px;
   line-height: 1.5;
+}
+
+.live-transcript-box::-webkit-scrollbar {
+  display: none;
+}
+
+.transcript-text {
+  margin: 0;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 footer {
