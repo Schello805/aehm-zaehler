@@ -1,6 +1,6 @@
 {
-  "name": "ähzähler",
-  "short_name": "ähzähler",
+  "name": "ähm-zähler",
+  "short_name": "ähm-zähler",
   "description": "Füllwörter in Sprache erkennen und analysieren",
   "start_url": "/",
   "display": "standalone",

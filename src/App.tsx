@@ -160,6 +160,11 @@ function App() {
   const [activePlayTime, setActivePlayTime] = useState(0)
   const [supercutCurrentIndex, setSupercutCurrentIndex] = useState(0)
 
+  const [fetchedMediaInfo, setFetchedMediaInfo] = useState<{ title: string; duration: number; uploader?: string } | null>(null)
+  const [isFetchingMediaInfo, setIsFetchingMediaInfo] = useState(false)
+  const [queueInfo, setQueueInfo] = useState<{ position: number; total: number; message: string } | null>(null)
+  const [showSelfHostModal, setShowSelfHostModal] = useState(false)
+
   const fileInputRef = useRef<HTMLInputElement>(null)
   const playbackRef = useRef<HTMLAudioElement>(null)
   const analysisControllerRef = useRef<AbortController | null>(null)
@@ -423,7 +428,7 @@ ${advice.summary}
     // Header bar
     ctx.fillStyle = '#1d1c1a'
     ctx.font = 'bold 36px "Outfit", sans-serif'
-    ctx.fillText('ähzähler', 60, 70)
+    ctx.fillText('ähm-zähler', 60, 70)
 
     ctx.fillStyle = '#c75b47'
     ctx.font = 'bold 15px sans-serif'
@@ -540,7 +545,7 @@ ${advice.summary}
     // Footer
     ctx.fillStyle = '#8a8279'
     ctx.font = '14px sans-serif'
-    ctx.fillText('Erstellt mit ähzähler (https://aehm-zaehler.de) — Sprechfluss sichtbar machen & trainieren', 60, 755)
+    ctx.fillText('Erstellt mit ähm-zähler (https://aehm-zaehler.de) — Sprechfluss sichtbar machen & trainieren', 60, 755)
 
     const dataUrl = canvas.toDataURL('image/png')
     const a = document.createElement('a')
@@ -567,6 +572,48 @@ ${advice.summary}
     document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light')
     localStorage.setItem('dark-mode', String(darkMode))
   }, [darkMode])
+
+  useEffect(() => {
+    const trimmed = url.trim()
+    if (!trimmed || !/^https?:\/\//i.test(trimmed)) {
+      setFetchedMediaInfo(null)
+      setIsFetchingMediaInfo(false)
+      return
+    }
+
+    let isCancelled = false
+    setIsFetchingMediaInfo(true)
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch('/api/media-info', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: trimmed }),
+        })
+        if (res.ok && !isCancelled) {
+          const data = await res.json()
+          if (data?.title) {
+            setFetchedMediaInfo({
+              title: data.title,
+              duration: data.duration || 0,
+              uploader: data.uploader || '',
+            })
+            if (!analysisTitle) {
+              setAnalysisTitle(data.title)
+            }
+          }
+        }
+      } catch {} finally {
+        if (!isCancelled) setIsFetchingMediaInfo(false)
+      }
+    }, 400)
+
+    return () => {
+      isCancelled = true
+      clearTimeout(timer)
+    }
+  }, [url])
 
   useEffect(() => {
     if (!file && !url) {
@@ -605,6 +652,7 @@ ${advice.summary}
     if (activeHistoryEntry?.sourceLabel) return activeHistoryEntry.sourceLabel
     if (analysisTitle) return analysisTitle
     if (result?.mediaTitle) return result.mediaTitle
+    if (fetchedMediaInfo?.title) return fetchedMediaInfo.title
     if (file?.name) return file.name
     if (url) {
       const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))([\w-]{11})/)
@@ -612,7 +660,7 @@ ${advice.summary}
       return url
     }
     return ''
-  }, [activeHistoryEntry, analysisTitle, result, file, url])
+  }, [activeHistoryEntry, analysisTitle, result, fetchedMediaInfo, file, url])
 
   const activeSourceLabel = currentMediaTitle || 'Unbekannte Quelle'
 
@@ -620,12 +668,12 @@ ${advice.summary}
   useEffect(() => {
     if (isAnalyzing) {
       document.title = currentMediaTitle
-        ? `(${Math.round(progress.percent)}%) ${currentMediaTitle} — ähzähler`
-        : `(${Math.round(progress.percent)}%) Analyse läuft — ähzähler`
+        ? `(${Math.round(progress.percent)}%) ${currentMediaTitle} — ähm-zähler`
+        : `(${Math.round(progress.percent)}%) Analyse läuft — ähm-zähler`
     } else if (result && currentMediaTitle) {
-      document.title = `✓ ${currentMediaTitle} — ähzähler`
+      document.title = `✓ ${currentMediaTitle} — ähm-zähler`
     } else {
-      document.title = 'ähzähler — Füllwörter sichtbar machen'
+      document.title = 'ähm-zähler — Füllwörter sichtbar machen'
     }
   }, [isAnalyzing, progress.percent, result, currentMediaTitle])
 
@@ -905,13 +953,19 @@ ${advice.summary}
               continue
             }
 
-            if (event.type === 'status') {
+            if (event.type === 'queue') {
+              setQueueInfo({ position: event.queuePosition, total: event.queueLength || event.queuePosition, message: event.message })
+            } else if (event.type === 'status') {
+              setQueueInfo(null)
               handleProgressUpdate(event)
             } else if (event.type === 'progress') {
+              setQueueInfo(null)
               handleProgressUpdate(event)
             } else if (event.type === 'complete') {
+              setQueueInfo(null)
               handleProgressUpdate(event)
             } else if (event.type === 'error') {
+              setQueueInfo(null)
               throw new Error(event.error || 'Analyse fehlgeschlagen.')
             }
           }
@@ -924,6 +978,7 @@ ${advice.summary}
         try { fetch(`/api/analyze-cancel/${jobId}`, { method: 'POST' }).catch(() => {}) } catch {}
         setProgress({ percent: 0, step: 0, label: 'Analyse abgebrochen', remainingSeconds: null })
         setIsAnalyzing(false)
+        setQueueInfo(null)
         return
       }
 
@@ -939,6 +994,7 @@ ${advice.summary}
           setError(errorMsg)
           setProgress({ percent: 0, step: 0, label: 'Fehler', remainingSeconds: 0 })
           setIsAnalyzing(false)
+          setQueueInfo(null)
         }
       }, 5000)
     } finally {
@@ -955,6 +1011,7 @@ ${advice.summary}
       } catch {}
     }
     setIsAnalyzing(false)
+    setQueueInfo(null)
     setProgress({ percent: 0, step: 0, label: 'Analyse abgebrochen', remainingSeconds: null })
   }
 
@@ -962,13 +1019,21 @@ ${advice.summary}
     <main>
       <nav className="topbar">
         <button className="brand" onClick={() => setView('analyse')} type="button">
-          <img className="brand-logo-img" src="/logo.png" alt="ähzähler Logo" />
-          <span className="brand-title">ähzähler</span>
+          <img className="brand-logo-img" src="/logo.png" alt="ähm-zähler Logo" />
+          <span className="brand-title">ähm-zähler</span>
         </button>
         <div className="nav-actions">
           <button className={view === 'analyse' ? 'nav-link active' : 'nav-link'} onClick={() => setView('analyse')} type="button">Analyse</button>
           <button className={view === 'live' ? 'nav-link active' : 'nav-link'} onClick={() => setView('live')} type="button">🔴 Live Studio</button>
           <button className={view === 'settings' ? 'nav-link active' : 'nav-link'} onClick={() => setView('settings')} type="button">Settings</button>
+          <button
+            type="button"
+            className="self-host-badge-btn"
+            onClick={() => setShowSelfHostModal(true)}
+            title="Auf eigenem Server oder Raspberry Pi 5 hosten"
+          >
+            🍓 Self-Host
+          </button>
           <button
             type="button"
             className="dark-toggle"
@@ -1053,7 +1118,25 @@ ${advice.summary}
                       placeholder="https://youtube.com/..."
                     />
                   </div>
-                  <small>Direkte Medienlinks werden unterstützt.</small>
+                  {isFetchingMediaInfo && (
+                    <div className="url-preview-card loading">
+                      <div className="url-preview-spinner" />
+                      <span>Ermittle YouTube-Titel & Videolänge…</span>
+                    </div>
+                  )}
+                  {fetchedMediaInfo && !isFetchingMediaInfo && (
+                    <div className="url-preview-card">
+                      <span className="url-preview-badge-icon">🎬</span>
+                      <div className="url-preview-meta">
+                        <strong className="url-preview-title">{fetchedMediaInfo.title}</strong>
+                        <span className="url-preview-sub">
+                          {fetchedMediaInfo.uploader ? `${fetchedMediaInfo.uploader} • ` : ''}
+                          {formatTimestamp(fetchedMediaInfo.duration)} Min.
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                  <small>YouTube, Vimeo oder direkte Medienlinks werden unterstützt.</small>
                 </div>
               </div>
 
@@ -1068,7 +1151,23 @@ ${advice.summary}
                 <span className="button-icon-wrap" aria-hidden="true">{isAnalyzing ? '×' : <span className="button-arrow">→</span>}</span>
               </button>
 
-              {isAnalyzing && (
+              {queueInfo && isAnalyzing && (
+                <div className="queue-callout-card" onClick={() => setShowSelfHostModal(true)} title="Klicken für Self-Hosting Infos (Raspberry Pi 5 / GitHub)">
+                  <div className="queue-callout-header">
+                    <div className="queue-spinner" />
+                    <strong>Warteschlange: Position #{queueInfo.position} von {queueInfo.total}</strong>
+                  </div>
+                  <p className="queue-callout-copy">
+                    Der Server verarbeitet gerade eine andere Analyse. Dein Auftrag startet gleich automatisch.
+                  </p>
+                  <div className="queue-callout-action">
+                    <span>🍓 Keine Wartezeit: Auf eigenem Server oder Raspberry Pi 5 hosten</span>
+                    <span className="action-arrow">→</span>
+                  </div>
+                </div>
+              )}
+
+              {isAnalyzing && !queueInfo && (
                 <div className="progress-panel" aria-live="polite">
                   <div className="progress-header">
                     <span>Analyse läuft</span>
@@ -1629,6 +1728,84 @@ ${advice.summary}
         </>
       )}
       {view === 'settings' && <AppFooter />}
+
+      {/* Self-Host & Queue Modal */}
+      {(queueInfo || showSelfHostModal) && (
+        <div className="self-host-modal-overlay" onClick={() => setShowSelfHostModal(false)}>
+          <div className="self-host-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-badge-pill">🍓 Raspberry Pi 5 & Self-Hosting</span>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => {
+                  setShowSelfHostModal(false)
+                }}
+              >✕</button>
+            </div>
+
+            {queueInfo && (
+              <div className="queue-live-banner">
+                <div className="queue-spinner" />
+                <div className="queue-banner-text">
+                  <strong>Server ausgelastet — Du bist in der Warteschlange!</strong>
+                  <span>Position #{queueInfo.position} von {queueInfo.total}. Deine Analyse startet automatisch, sobald der vorherige Auftrag fertig ist.</span>
+                </div>
+              </div>
+            )}
+
+            <h3>Keine Lust zu warten? Hoste „ähm-zähler“ selbst!</h3>
+            <p className="modal-intro">
+              Du kannst diesen Füllwort-Zähler komplett eigenständig und kostenlos auf deiner eigenen Hardware betreiben — perfekt für einen <strong>Raspberry Pi 5</strong> oder einen eigenen Server!
+            </p>
+
+            <div className="self-host-features-grid">
+              <div className="feature-item">
+                <span className="feat-icon">🍓</span>
+                <div>
+                  <strong>Optimiert für Raspberry Pi 5</strong>
+                  <p>Dank ARM64-Unterstützung und quantisiertem <code>faster-whisper (int8)</code> läuft die KI auf dem Pi 5 extrem schnell, leise & stromsparend.</p>
+                </div>
+              </div>
+              <div className="feature-item">
+                <span className="feat-icon">🔒</span>
+                <div>
+                  <strong>100% Privatsphäre & keine Limits</strong>
+                  <p>Keine Warteschlange, unbegrenzte Dateigrößen und kein Upload auf fremde Server. Deine Daten bleiben bei dir.</p>
+                </div>
+              </div>
+              <div className="feature-item">
+                <span className="feat-icon">🚀</span>
+                <div>
+                  <strong>In 2 Minuten eingerichtet</strong>
+                  <p>Einfach das GitHub-Repo klonen und mit Python / Docker oder systemd starten.</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="modal-actions">
+              <a
+                href="https://github.com/Schello805/aehm-zaehler"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="modal-github-button"
+              >
+                <svg className="footer-github-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+                </svg>
+                <span>GitHub Anleitung & Repo öffnen →</span>
+              </a>
+              <button
+                type="button"
+                className="modal-dismiss-btn"
+                onClick={() => setShowSelfHostModal(false)}
+              >
+                Schließen
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   )
 }
@@ -1637,7 +1814,7 @@ function AppFooter() {
   return (
     <footer>
       <div className="footer-left">
-        <span>ähzähler / 2026</span>
+        <span>ähm-zähler / 2026</span>
         <span className="footer-divider">•</span>
         <span className="footer-author">Erstellt durch Michael Schellenberger (VibeCoder)</span>
       </div>
@@ -2290,7 +2467,7 @@ function LiveStudio({ words }: { words: string[] }) {
       <div className="live-studio-grid">
         <div className="live-studio-panel left-panel">
           <div className={`live-counter-box${isAmbientAlert ? " ambient-alert" : ""}`}>
-            <img src="/logo.png" alt="ähzähler Logo" className="live-logo-badge" />
+            <img src="/logo.png" alt="ähm-zähler Logo" className="live-logo-badge" />
 
             {/* Particle canvas overlay */}
             <div className="particle-canvas-wrap">

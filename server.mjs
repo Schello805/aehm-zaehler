@@ -49,13 +49,47 @@ const commonYtDlpOptions = {
   userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
 }
 
-const getUrlDuration = async (url) => {
+const isValidHttpUrl = (urlString) => {
+  try {
+    const parsed = new URL(urlString)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false
+    const hostname = parsed.hostname.toLowerCase()
+    if (
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname === '0.0.0.0' ||
+      hostname === '::1' ||
+      hostname.endsWith('.local') ||
+      hostname.endsWith('.internal') ||
+      hostname.endsWith('.lan') ||
+      /^10\./.test(hostname) ||
+      /^192\.168\./.test(hostname) ||
+      /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname) ||
+      /^169\.254\./.test(hostname)
+    ) {
+      return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+const getUrlMetadata = async (url) => {
+  if (!isValidHttpUrl(url)) {
+    throw new Error('Ungültige oder nicht erlaubte URL.')
+  }
   const metadata = await youtubedl(url, {
     ...commonYtDlpOptions,
     dumpSingleJson: true,
     noDownload: true,
   }, { timeout: 2 * 60 * 1000 })
-  return Number(metadata.duration || 0)
+  return {
+    duration: Number(metadata.duration || 0),
+    title: String(metadata.title || '').trim(),
+    uploader: String(metadata.uploader || metadata.channel || '').trim(),
+    thumbnail: String(metadata.thumbnail || '').trim(),
+  }
 }
 
 const countWordOccurrences = (text, word) => {
@@ -95,19 +129,57 @@ app.post('/api/media-info', async (request, response) => {
   try {
     const url = String(request.body.url || '').trim()
     if (!url) return response.status(400).json({ error: 'Kein Medienlink angegeben.' })
+    if (!isValidHttpUrl(url)) return response.status(400).json({ error: 'Ungültige oder nicht erlaubte URL.' })
 
-    const duration = await getUrlDuration(url)
-    if (!duration) return response.status(422).json({ error: 'Die Länge des Mediums konnte nicht aus den Metadaten gelesen werden.' })
+    const info = await getUrlMetadata(url)
+    if (!info.duration && !info.title) {
+      return response.status(422).json({ error: 'Die Metadaten konnten nicht aus dem Link gelesen werden.' })
+    }
 
-    return response.json({ duration })
+    return response.json(info)
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Medienmetadaten konnten nicht geladen werden.'
     console.error('Metadaten konnten nicht geladen werden:', message)
-    return response.status(400).json({ error: 'Die Medienlänge konnte für diesen Link nicht ermittelt werden.' })
+    return response.status(400).json({ error: message })
   }
 })
 
 const activeJobs = new Map()
+
+// Queue Management for Concurrency Control
+const MAX_CONCURRENT_ANALYSES = 1
+let activeAnalysisCount = 0
+const analysisQueue = []
+
+const notifyQueuePositions = () => {
+  analysisQueue.forEach((item, index) => {
+    if (item.sendEvent && !item.isAborted) {
+      item.sendEvent({
+        type: 'queue',
+        queuePosition: index + 1,
+        queueLength: analysisQueue.length,
+        message: `Server ausgelastet. Du bist in der Warteschlange (Position ${index + 1} von ${analysisQueue.length})...`,
+      })
+    }
+  })
+}
+
+const processNextInQueue = () => {
+  if (activeAnalysisCount >= MAX_CONCURRENT_ANALYSES || analysisQueue.length === 0) return
+  const nextJob = analysisQueue.shift()
+  notifyQueuePositions()
+  if (nextJob && !nextJob.isAborted) {
+    activeAnalysisCount += 1
+    nextJob.start()
+  } else if (nextJob && nextJob.isAborted) {
+    processNextInQueue()
+  }
+}
+
+const releaseAnalysisSlot = () => {
+  activeAnalysisCount = Math.max(0, activeAnalysisCount - 1)
+  processNextInQueue()
+}
 
 // Clean up old jobs every 5 minutes
 setInterval(() => {
@@ -159,6 +231,13 @@ app.post('/api/analyze-cancel/:id', (request, response) => {
       job.childProcess = null
     }
   }
+  // Also remove from queue if present
+  const queueIdx = analysisQueue.findIndex((q) => q.jobId === id)
+  if (queueIdx !== -1) {
+    const [removed] = analysisQueue.splice(queueIdx, 1)
+    if (removed) removed.isAborted = true
+    notifyQueuePositions()
+  }
   return response.json({ ok: true })
 })
 
@@ -167,6 +246,7 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
   let childProcess = null
   let isAborted = false
   let heartbeat = null
+  let isSlotAcquired = false
 
   const jobId = String(request.body.jobId || `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`)
   const jobState = {
@@ -219,6 +299,10 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
     if (data.type === 'status') {
       jobState.stage = data.stage || jobState.stage
       jobState.message = data.message || jobState.message
+    } else if (data.type === 'queue') {
+      jobState.stage = 'queue'
+      jobState.queuePosition = data.queuePosition
+      jobState.message = data.message
     } else if (data.type === 'progress') {
       jobState.stage = 'transcribing'
       jobState.percent = data.percent || jobState.percent
@@ -249,246 +333,282 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
   request.on('close', () => {
     isAborted = true
     if (heartbeat) clearInterval(heartbeat)
+    const queueIdx = analysisQueue.findIndex((q) => q.jobId === jobId)
+    if (queueIdx !== -1) {
+      const [removed] = analysisQueue.splice(queueIdx, 1)
+      if (removed) removed.isAborted = true
+      notifyQueuePositions()
+    }
     if (childProcess) {
       try {
         childProcess.kill('SIGKILL')
       } catch {}
     }
+    if (isSlotAcquired) {
+      isSlotAcquired = false
+      releaseAnalysisSlot()
+    }
   })
 
-  try {
-    console.log('[analyze] Request received for job:', jobId, 'at', new Date().toISOString())
-    temporaryDirectory = await mkdtemp(join(tmpdir(), 'aehmzaehler-'))
-    console.log('[analyze] Temp dir:', temporaryDirectory)
+  const runAnalysis = async () => {
+    isSlotAcquired = true
+    try {
+      console.log('[analyze] Starting job execution for:', jobId)
+      if (request.body.url && !isValidHttpUrl(request.body.url)) {
+        throw new Error('Ungültige oder nicht erlaubte Medien-URL.')
+      }
 
-    const words = JSON.parse(request.body.words || '[]').map((word) => word.trim().toLowerCase()).filter(Boolean)
-    console.log('[analyze] Words to search:', words)
+      temporaryDirectory = await mkdtemp(join(tmpdir(), 'aehmzaehler-'))
+      console.log('[analyze] Temp dir:', temporaryDirectory)
 
-    let file = request.file
-    let mediaTitle = request.body.title ? String(request.body.title).trim() : ''
-    if (file && !mediaTitle) {
-      mediaTitle = file.originalname
-    }
+      const words = JSON.parse(request.body.words || '[]').map((word) => word.trim().toLowerCase()).filter(Boolean)
+      console.log('[analyze] Words to search:', words)
 
-    if (!file && request.body.url) {
-      console.log('[analyze] Downloading from URL:', request.body.url)
-      sendEvent({ type: 'status', stage: 'download', message: 'Lade Video / Audio von YouTube herunter...' })
+      let file = request.file
+      let mediaTitle = request.body.title ? String(request.body.title).trim() : ''
+      if (file && !mediaTitle) {
+        mediaTitle = file.originalname
+      }
 
-      // Fetch YouTube video title
-      try {
-        const info = await youtubedl(request.body.url, {
-          ...commonYtDlpOptions,
-          dumpSingleJson: true,
-          noPlaylist: true,
-        }, { timeout: 12000 })
-        if (info?.title && !mediaTitle) {
-          mediaTitle = info.title
-          jobState.mediaTitle = mediaTitle
-          sendEvent({ type: 'status', stage: 'download', message: `Lade „${mediaTitle}“ von YouTube herunter...`, mediaTitle })
+      if (!file && request.body.url) {
+        console.log('[analyze] Downloading from URL:', request.body.url)
+        sendEvent({ type: 'status', stage: 'download', message: 'Lade Video / Audio von YouTube herunter...' })
+
+        // Fetch YouTube video title & metadata
+        try {
+          const info = await getUrlMetadata(request.body.url)
+          if (info?.title && !mediaTitle) {
+            mediaTitle = info.title
+            jobState.mediaTitle = mediaTitle
+            sendEvent({ type: 'status', stage: 'download', message: `Lade „${mediaTitle}“ herunter...`, mediaTitle })
+          }
+        } catch (tErr) {
+          console.log('[analyze] Title fetch note:', tErr?.message)
         }
-      } catch (tErr) {
-        console.log('[analyze] Title fetch note:', tErr?.message)
+
+        const output = join(temporaryDirectory, 'audio.%(ext)s')
+        try {
+          await youtubedl(request.body.url, {
+            ...commonYtDlpOptions,
+            extractAudio: true,
+            audioFormat: 'mp3',
+            output,
+          }, { timeout: 10 * 60 * 1000 })
+        } catch (dlErr) {
+          const msg = dlErr instanceof Error ? dlErr.message : String(dlErr)
+          console.error('[analyze] yt-dlp Fehler:', msg)
+          throw new Error(`YouTube-Download fehlgeschlagen: ${msg.split('\n')[0]}`)
+        }
+
+        const dirFiles = await readdir(temporaryDirectory)
+        const downloadedFileName = dirFiles.find((f) => f.startsWith('audio.'))
+        if (!downloadedFileName) {
+          throw new Error('Die heruntergeladene Audiodatei konnte im temporären Verzeichnis nicht gefunden werden.')
+        }
+        const downloadedFilePath = join(temporaryDirectory, downloadedFileName)
+        file = { buffer: await readFile(downloadedFilePath), originalname: 'linked-media.mp3', mimetype: 'audio/mpeg' }
+        console.log('[analyze] Download complete, file:', downloadedFileName, 'size:', file.buffer.length)
       }
 
-      const output = join(temporaryDirectory, 'audio.%(ext)s')
-      try {
-        await youtubedl(request.body.url, {
-          ...commonYtDlpOptions,
-          extractAudio: true,
-          audioFormat: 'mp3',
-          output,
-        }, { timeout: 10 * 60 * 1000 })
-      } catch (dlErr) {
-        const msg = dlErr instanceof Error ? dlErr.message : String(dlErr)
-        console.error('[analyze] yt-dlp Fehler:', msg)
-        throw new Error(`YouTube-Download fehlgeschlagen: ${msg.split('\n')[0]}`)
+      if (!file) {
+        sendEvent({ type: 'error', error: 'Bitte eine Datei oder einen Link angeben.' })
+        return response.end()
+      }
+      console.log('[analyze] File:', file.originalname, 'size:', file.buffer.length, 'mime:', file.mimetype)
+
+      if (file.buffer.length > 24 * 1024 * 1024 || file.mimetype === 'video/mp4') {
+        console.log('[analyze] Compressing with ffmpeg...')
+        sendEvent({ type: 'status', stage: 'converting', message: 'Optimiere Audio für Whisper KI...' })
+        const inputPath = join(temporaryDirectory, 'input-media')
+        const compressedPath = join(temporaryDirectory, 'compressed.mp3')
+        await writeFile(inputPath, file.buffer)
+        await runCommand('ffmpeg', ['-y', '-i', inputPath, '-vn', '-ac', '1', '-ar', '16000', '-b:a', '48k', compressedPath], { timeout: 10 * 60 * 1000 })
+        file = { buffer: await readFile(compressedPath), originalname: 'compressed-audio.mp3', mimetype: 'audio/mpeg' }
+        console.log('[analyze] Compressed size:', file.buffer.length)
       }
 
-      const dirFiles = await readdir(temporaryDirectory)
-      const downloadedFileName = dirFiles.find((f) => f.startsWith('audio.'))
-      if (!downloadedFileName) {
-        throw new Error('Die heruntergeladene Audiodatei konnte im temporären Verzeichnis nicht gefunden werden.')
-      }
-      const downloadedFilePath = join(temporaryDirectory, downloadedFileName)
-      file = { buffer: await readFile(downloadedFilePath), originalname: 'linked-media.mp3', mimetype: 'audio/mpeg' }
-      console.log('[analyze] Download complete, file:', downloadedFileName, 'size:', file.buffer.length)
-    }
+      const workingAudioPath = join(temporaryDirectory, 'prepared-audio.mp3')
+      await writeFile(workingAudioPath, file.buffer)
 
-    if (!file) {
-      sendEvent({ type: 'error', error: 'Bitte eine Datei oder einen Link angeben.' })
-      return response.end()
-    }
-    console.log('[analyze] File:', file.originalname, 'size:', file.buffer.length, 'mime:', file.mimetype)
+      const pythonPath = getPythonPath()
+      const scriptPath = getTranscriptionScript()
+      console.log('[analyze] Using Python:', pythonPath, 'exists:', existsSync(pythonPath))
+      console.log('[analyze] Using Script:', scriptPath, 'exists:', existsSync(scriptPath))
 
-    if (file.buffer.length > 24 * 1024 * 1024 || file.mimetype === 'video/mp4') {
-      console.log('[analyze] Compressing with ffmpeg...')
-      sendEvent({ type: 'status', stage: 'converting', message: 'Optimiere Audio für Whisper KI...' })
-      const inputPath = join(temporaryDirectory, 'input-media')
-      const compressedPath = join(temporaryDirectory, 'compressed.mp3')
-      await writeFile(inputPath, file.buffer)
-      await runCommand('ffmpeg', ['-y', '-i', inputPath, '-vn', '-ac', '1', '-ar', '16000', '-b:a', '48k', compressedPath], { timeout: 10 * 60 * 1000 })
-      file = { buffer: await readFile(compressedPath), originalname: 'compressed-audio.mp3', mimetype: 'audio/mpeg' }
-      console.log('[analyze] Compressed size:', file.buffer.length)
-    }
+      sendEvent({ type: 'status', stage: 'transcribing', message: 'Whisper KI transkribiert Audio...' })
 
-    const workingAudioPath = join(temporaryDirectory, 'prepared-audio.mp3')
-    await writeFile(workingAudioPath, file.buffer)
+      await new Promise((resolve, reject) => {
+        let duration = 0
+        const segments = []
+        const textParts = []
+        let stdoutBuffer = ''
+        let stderrBuffer = ''
 
-    const pythonPath = getPythonPath()
-    const scriptPath = getTranscriptionScript()
-    console.log('[analyze] Using Python:', pythonPath, 'exists:', existsSync(pythonPath))
-    console.log('[analyze] Using Script:', scriptPath, 'exists:', existsSync(scriptPath))
+        childProcess = spawn(pythonPath, [scriptPath, workingAudioPath, words.join(',')])
+        jobState.childProcess = childProcess
 
-    sendEvent({ type: 'status', stage: 'transcribing', message: 'Whisper KI transkribiert Audio...' })
+        childProcess.stdout.on('data', (chunk) => {
+          stdoutBuffer += chunk.toString()
+          const lines = stdoutBuffer.split('\n')
+          stdoutBuffer = lines.pop() || ''
 
-    await new Promise((resolve, reject) => {
-      let duration = 0
-      const segments = []
-      const textParts = []
-      let stdoutBuffer = ''
-      let stderrBuffer = ''
+          for (const line of lines) {
+            const trimmed = line.trim()
+            if (!trimmed) continue
+            try {
+              const data = JSON.parse(trimmed)
+              if (data.type === 'info') {
+                duration = Number(data.duration || 0)
+                sendEvent({
+                  type: 'progress',
+                  percent: 2,
+                  currentTime: 0,
+                  duration,
+                  counts: Object.fromEntries(words.map((w) => [w, 0])),
+                  fillerWords: 0,
+                  baseFillerWords: 0,
+                  totalWords: 0,
+                  relativeRate: 0,
+                  partialText: '',
+                  segments: [],
+                })
+              } else if (data.type === 'segment' && data.segment) {
+                const seg = {
+                  start: Number(data.segment.start || 0),
+                  end: Number(data.segment.end || 0),
+                  text: String(data.segment.text || ''),
+                  counts: countSegmentWords(String(data.segment.text || ''), words),
+                }
+                segments.push(seg)
+                textParts.push(seg.text)
+                console.log('[analyze] Segment (', seg.start.toFixed(1), 's -', seg.end.toFixed(1), 's):', seg.text)
 
-      childProcess = spawn(pythonPath, [scriptPath, workingAudioPath, words.join(',')])
-      jobState.childProcess = childProcess
+                const currentText = textParts.join(' ')
+                const counts = Object.fromEntries(words.map((word) => [word, countWordOccurrences(currentText, word)]))
+                const fillerWords = Object.values(counts).reduce((sum, count) => sum + count, 0)
+                const phraseOverlap = getPhraseOverlap(words, counts)
+                const baseFillerWords = Math.max(0, fillerWords - phraseOverlap)
+                const totalWords = currentText.trim() ? currentText.trim().split(/\s+/).length : 0
+                const relativeRate = totalWords ? baseFillerWords / totalWords : 0
+                const percent = duration > 0 ? Math.min(99, Math.max(5, Math.round((seg.end / duration) * 100))) : 50
 
-      childProcess.stdout.on('data', (chunk) => {
-        stdoutBuffer += chunk.toString()
-        const lines = stdoutBuffer.split('\n')
-        stdoutBuffer = lines.pop() || ''
-
-        for (const line of lines) {
-          const trimmed = line.trim()
-          if (!trimmed) continue
-          try {
-            const data = JSON.parse(trimmed)
-            if (data.type === 'info') {
-              duration = Number(data.duration || 0)
-              sendEvent({
-                type: 'progress',
-                percent: 2,
-                currentTime: 0,
-                duration,
-                counts: Object.fromEntries(words.map((w) => [w, 0])),
-                fillerWords: 0,
-                baseFillerWords: 0,
-                totalWords: 0,
-                relativeRate: 0,
-                partialText: '',
-                segments: [],
-              })
-            } else if (data.type === 'segment' && data.segment) {
-              const seg = {
-                start: Number(data.segment.start || 0),
-                end: Number(data.segment.end || 0),
-                text: String(data.segment.text || ''),
-                counts: countSegmentWords(String(data.segment.text || ''), words),
-              }
-              segments.push(seg)
-              textParts.push(seg.text)
-              console.log('[analyze] Segment (', seg.start.toFixed(1), 's -', seg.end.toFixed(1), 's):', seg.text)
-
-              const currentText = textParts.join(' ')
-              const counts = Object.fromEntries(words.map((word) => [word, countWordOccurrences(currentText, word)]))
-              const fillerWords = Object.values(counts).reduce((sum, count) => sum + count, 0)
-              const phraseOverlap = getPhraseOverlap(words, counts)
-              const baseFillerWords = Math.max(0, fillerWords - phraseOverlap)
-              const totalWords = currentText.trim() ? currentText.trim().split(/\s+/).length : 0
-              const relativeRate = totalWords ? baseFillerWords / totalWords : 0
-              const percent = duration > 0 ? Math.min(99, Math.max(5, Math.round((seg.end / duration) * 100))) : 50
-
-              sendEvent({
-                type: 'progress',
-                percent,
-                currentTime: seg.end,
-                duration,
-                counts,
-                fillerWords,
-                baseFillerWords,
-                totalWords,
-                relativeRate,
-                partialText: currentText,
-                segment: seg,
-                segments,
-              })
-            } else if (data.type === 'done') {
-              const text = String(data.text || textParts.join(' '))
-              const finalDuration = Number(data.duration || duration)
-              const counts = Object.fromEntries(words.map((word) => [word, countWordOccurrences(text, word)]))
-              const fillerWords = Object.values(counts).reduce((sum, count) => sum + count, 0)
-              const phraseOverlap = getPhraseOverlap(words, counts)
-              const baseFillerWords = Math.max(0, fillerWords - phraseOverlap)
-              const totalWords = text.trim() ? text.trim().split(/\s+/).length : 0
-              const relativeRate = totalWords ? baseFillerWords / totalWords : 0
-              const finalSegments = Array.isArray(data.segments) && data.segments.length > 0
-                ? data.segments.map((s) => ({
-                    start: Number(s.start || 0),
-                    end: Number(s.end || 0),
-                    text: String(s.text || ''),
-                    counts: countSegmentWords(String(s.text || ''), words),
-                  }))
-                : segments
-
-              console.log('[analyze] Complete! Total words:', totalWords, 'Fillers:', fillerWords, 'Segments:', finalSegments.length)
-              sendEvent({
-                type: 'complete',
-                result: {
-                  text,
-                  duration: finalDuration,
+                sendEvent({
+                  type: 'progress',
+                  percent,
+                  currentTime: seg.end,
+                  duration,
                   counts,
                   fillerWords,
                   baseFillerWords,
                   totalWords,
                   relativeRate,
-                  segments: finalSegments,
-                  mediaTitle: mediaTitle || (file ? file.originalname : ''),
-                },
-              })
+                  partialText: currentText,
+                  segment: seg,
+                  segments,
+                })
+              } else if (data.type === 'done') {
+                const text = String(data.text || textParts.join(' '))
+                const finalDuration = Number(data.duration || duration)
+                const counts = Object.fromEntries(words.map((word) => [word, countWordOccurrences(text, word)]))
+                const fillerWords = Object.values(counts).reduce((sum, count) => sum + count, 0)
+                const phraseOverlap = getPhraseOverlap(words, counts)
+                const baseFillerWords = Math.max(0, fillerWords - phraseOverlap)
+                const totalWords = text.trim() ? text.trim().split(/\s+/).length : 0
+                const relativeRate = totalWords ? baseFillerWords / totalWords : 0
+                const finalSegments = Array.isArray(data.segments) && data.segments.length > 0
+                  ? data.segments.map((s) => ({
+                      start: Number(s.start || 0),
+                      end: Number(s.end || 0),
+                      text: String(s.text || ''),
+                      counts: countSegmentWords(String(s.text || ''), words),
+                    }))
+                  : segments
+
+                console.log('[analyze] Complete! Total words:', totalWords, 'Fillers:', fillerWords, 'Segments:', finalSegments.length)
+                sendEvent({
+                  type: 'complete',
+                  result: {
+                    text,
+                    duration: finalDuration,
+                    counts,
+                    fillerWords,
+                    baseFillerWords,
+                    totalWords,
+                    relativeRate,
+                    segments: finalSegments,
+                    mediaTitle: mediaTitle || (file ? file.originalname : ''),
+                  },
+                })
+              }
+            } catch (err) {
+              console.warn('[analyze] Failed to parse line from python:', line, err)
             }
-          } catch (err) {
-            console.warn('[analyze] Failed to parse line from python:', line, err)
           }
-        }
+        })
+
+        childProcess.stderr.on('data', (chunk) => {
+          stderrBuffer += chunk.toString()
+        })
+
+        childProcess.on('error', (err) => {
+          console.error('[analyze] Python process spawn error:', err)
+          reject(err)
+        })
+
+        childProcess.on('close', (code) => {
+          console.log('[analyze] Python process exited with code:', code)
+          if (code !== 0 && !isAborted) {
+            reject(new Error(`Whisper-Transkription fehlgeschlagen (Code ${code}): ${stderrBuffer.slice(-500)}`))
+          } else {
+            resolve()
+          }
+        })
       })
 
-      childProcess.stderr.on('data', (chunk) => {
-        stderrBuffer += chunk.toString()
-      })
+      return response.end()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Analyse fehlgeschlagen.'
+      const stack = error instanceof Error ? error.stack : ''
+      console.error('[analyze] FEHLER:', message)
+      console.error('[analyze] STACK:', stack)
+      sendEvent({ type: 'error', error: message })
+      setTimeout(() => {
+        try { response.end() } catch {}
+      }, 150)
+    } finally {
+      if (heartbeat) clearInterval(heartbeat)
+      if (typeof temporaryDirectory === 'string') await rm(temporaryDirectory, { recursive: true, force: true })
+      if (isSlotAcquired) {
+        isSlotAcquired = false
+        releaseAnalysisSlot()
+      }
+    }
+  }
 
-      childProcess.on('error', (err) => {
-        console.error('[analyze] Python process spawn error:', err)
-        reject(err)
-      })
-
-      childProcess.on('close', (code) => {
-        console.log('[analyze] Python process exited with code:', code)
-        if (code !== 0 && !isAborted) {
-          reject(new Error(`Whisper-Transkription fehlgeschlagen (Code ${code}): ${stderrBuffer.slice(-500)}`))
-        } else {
-          resolve()
-        }
-      })
+  // Check concurrency limit
+  if (activeAnalysisCount >= MAX_CONCURRENT_ANALYSES) {
+    const queuePosition = analysisQueue.length + 1
+    jobState.stage = 'queue'
+    jobState.queuePosition = queuePosition
+    analysisQueue.push({ jobId, isAborted: false, sendEvent, start: runAnalysis })
+    sendEvent({
+      type: 'queue',
+      queuePosition,
+      queueLength: analysisQueue.length,
+      message: `Server ausgelastet. Du bist in der Warteschlange (Position ${queuePosition})...`,
     })
-
-    return response.end()
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Analyse fehlgeschlagen.'
-    const stack = error instanceof Error ? error.stack : ''
-    console.error('[analyze] FEHLER:', message)
-    console.error('[analyze] STACK:', stack)
-    sendEvent({ type: 'error', error: message })
-    setTimeout(() => {
-      try { response.end() } catch {}
-    }, 150)
-    return
-  } finally {
-    if (heartbeat) clearInterval(heartbeat)
-    if (typeof temporaryDirectory === 'string') await rm(temporaryDirectory, { recursive: true, force: true })
+  } else {
+    activeAnalysisCount += 1
+    runAnalysis()
   }
 })
 
 app.post('/api/clean-audio', upload.single('file'), async (request, response) => {
   let temporaryDirectory
   try {
+    if (request.body.url && !isValidHttpUrl(request.body.url)) {
+      return response.status(400).json({ error: 'Ungültige oder nicht erlaubte URL.' })
+    }
     temporaryDirectory = await mkdtemp(join(tmpdir(), 'aehmclean-'))
     let file = request.file
     if (!file && request.body.url) {
