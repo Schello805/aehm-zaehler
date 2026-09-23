@@ -1723,14 +1723,14 @@ function Settings({
 
 // Multi-variant mappings for common German hesitation sounds and filler phrases
 const FILLER_VARIANT_MAP: Record<string, string[][]> = {
-  "äh": [["äh", "ä", "ah", "aeh", "eh", "öh", "oeh", "ähh", "ähhh", "uh", "er"]],
-  "ähm": [["ähm", "aehm", "ehm", "öhm", "ahm", "hm", "hmm", "hmmm", "uhm", "erm", "äm", "aem"]],
-  "also äh": [["also"], ["äh", "ä", "ah", "aeh", "eh", "öh", "oeh", "ähh", "ähhh", "uh", "er"]],
-  "also ähm": [["also"], ["ähm", "aehm", "ehm", "öhm", "ahm", "hm", "hmm", "hmmm", "uhm", "erm", "äm", "aem"]],
-  "aber äh": [["aber"], ["äh", "ä", "ah", "aeh", "eh", "öh", "oeh", "ähh", "ähhh", "uh", "er"]],
-  "aber ähm": [["aber"], ["ähm", "aehm", "ehm", "öhm", "ahm", "hm", "hmm", "hmmm", "uhm", "erm", "äm", "aem"]],
-  "und äh": [["und"], ["äh", "ä", "ah", "aeh", "eh", "öh", "oeh", "ähh", "ähhh", "uh", "er"]],
-  "und ähm": [["und"], ["ähm", "aehm", "ehm", "öhm", "ahm", "hm", "hmm", "hmmm", "uhm", "erm", "äm", "aem"]],
+  "äh": [["äh", "ä", "ah", "aeh", "eh", "öh", "oeh", "ähh", "ähhh", "ää", "äääh", "uh", "er", "a"]],
+  "ähm": [["ähm", "m", "em", "mm", "mmm", "hm", "hmm", "hmmm", "ahm", "am", "öhm", "oehm", "uhm", "erm", "äm", "aem", "äähm", "äh", "aehm", "ehm"]],
+  "also äh": [["also"], ["äh", "ä", "ah", "aeh", "eh", "öh", "oeh", "ähh", "ähhh", "ää", "uh", "er", "a"]],
+  "also ähm": [["also"], ["ähm", "m", "em", "mm", "mmm", "hm", "hmm", "hmmm", "ahm", "am", "öhm", "uhm", "erm", "äm", "äähm"]],
+  "aber äh": [["aber"], ["äh", "ä", "ah", "aeh", "eh", "öh", "oeh", "ähh", "ähhh", "ää", "uh", "er", "a"]],
+  "aber ähm": [["aber"], ["ähm", "m", "em", "mm", "mmm", "hm", "hmm", "hmmm", "ahm", "am", "öhm", "uhm", "erm", "äm", "äähm"]],
+  "und äh": [["und"], ["äh", "ä", "ah", "aeh", "eh", "öh", "oeh", "ähh", "ähhh", "ää", "uh", "er", "a"]],
+  "und ähm": [["und"], ["ähm", "m", "em", "mm", "mmm", "hm", "hmm", "hmmm", "ahm", "am", "öhm", "uhm", "erm", "äm", "äähm"]],
   "sozusagen": [["sozusagen", "sozusagn"]],
   "eigentlich": [["eigentlich"]],
   "quasi": [["quasi"]],
@@ -1739,7 +1739,7 @@ const FILLER_VARIANT_MAP: Record<string, string[][]> = {
   "irgendwie": [["irgendwie"]],
   "im grunde": [["im", "in"], ["grunde", "grund"]],
   "im endeffekt": [["im", "in"], ["endeffekt"]]
-}
+};
 
 function countTargetInTokens(tokens: string[], target: string): number {
   const normTarget = target.toLowerCase().trim()
@@ -1771,9 +1771,10 @@ function countTargetInTokens(tokens: string[], target: string): number {
 
 function LiveStudio({ words }: { words: string[] }) {
   const [isListening, setIsListening] = useState(false)
+  const isListeningRef = useRef(false)
   const [liveCount, setLiveCount] = useState(0)
   const [wordCounts, setWordCounts] = useState<Record<string, number>>({})
-  const [liveTranscript, setLiveTranscript] = useState<string>('')
+  const [liveTranscript, setLiveTranscript] = useState<string>("")
   const [lastAlert, setLastAlert] = useState<string | null>(null)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const [speechPace, setSpeechPace] = useState(0)
@@ -1790,10 +1791,12 @@ function LiveStudio({ words }: { words: string[] }) {
   const particleAnimRef = useRef<number | null>(null)
   const counterRef = useRef<HTMLSpanElement | null>(null)
   const transcriptBoxRef = useRef<HTMLDivElement | null>(null)
-  // Ref for elapsedSeconds so onresult closure always has the current value (avoids stale closure, WPM=0 bug)
   const elapsedSecondsRef = useRef(0)
-  // Segment-by-segment filler counts that permanently lock in interim and final filler hits across all spoken phrases
-  const segmentFillersRef = useRef<Map<number, Record<string, number>>>(new Map())
+  
+  // Persistent tracking across SpeechRecognition pauses/restarts
+  const sessionCountRef = useRef(0)
+  const accumulatedFinalTextRef = useRef<string>("")
+  const segmentFillersRef = useRef<Map<string, Record<string, number>>>(new Map())
 
   // Auto-scroll transcript box to bottom on new content
   useEffect(() => {
@@ -1805,9 +1808,9 @@ function LiveStudio({ words }: { words: string[] }) {
   const popCounterAnimation = () => {
     const el = counterRef.current
     if (!el) return
-    el.classList.remove('counter-pop')
+    el.classList.remove("counter-pop")
     void el.offsetWidth // reflow to restart
-    el.classList.add('counter-pop')
+    el.classList.add("counter-pop")
   }
 
   // Spawn particles on filler word detection
@@ -1816,140 +1819,175 @@ function LiveStudio({ words }: { words: string[] }) {
     if (!canvas) return
     const cx = canvas.width / 2
     const cy = canvas.height / 2
-    const colors = ['#f37d21', '#ef4444', '#ffb800', '#ff6b6b', '#fbbf24']
+    const colors = ["#f37d21", "#ef4444", "#ffb800", "#ff6b6b", "#fbbf24"]
     for (let i = 0; i < 18; i++) {
       const angle = Math.random() * Math.PI * 2
       const speed = 2 + Math.random() * 4
       particlesRef.current.push({
-        x: cx, y: cy,
+        x: cx,
+        y: cy,
         vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed - 2,
+        vy: Math.sin(angle) * speed - 1.5,
         alpha: 1,
-        color: colors[Math.floor(Math.random() * colors.length)],
+        color: colors[Math.floor(Math.random() * colors.length)]
       })
     }
-    if (!particleAnimRef.current) animateParticles()
+    if (!particleAnimRef.current) {
+      animateParticles()
+    }
   }
 
   const animateParticles = () => {
     const canvas = particleCanvasRef.current
     if (!canvas) return
-    const ctx = canvas.getContext('2d')
+    const ctx = canvas.getContext("2d")
     if (!ctx) return
+
     ctx.clearRect(0, 0, canvas.width, canvas.height)
-    particlesRef.current = particlesRef.current.filter((p) => p.alpha > 0.02)
+    particlesRef.current = particlesRef.current.filter((p) => p.alpha > 0.04)
+
     for (const p of particlesRef.current) {
-      p.x += p.vx; p.y += p.vy
-      p.vy += 0.15 // gravity
-      p.alpha -= 0.022
+      p.x += p.vx
+      p.y += p.vy
+      p.vy += 0.12 // gravity
+      p.alpha *= 0.94
       ctx.save()
-      ctx.globalAlpha = Math.max(0, p.alpha)
+      ctx.globalAlpha = p.alpha
       ctx.fillStyle = p.color
       ctx.beginPath()
-      ctx.arc(p.x, p.y, 4, 0, Math.PI * 2)
+      ctx.arc(p.x, p.y, 3, 0, Math.PI * 2)
       ctx.fill()
       ctx.restore()
     }
+
     if (particlesRef.current.length > 0) {
       particleAnimRef.current = requestAnimationFrame(animateParticles)
     } else {
       particleAnimRef.current = null
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
     }
   }
 
-  // Draw rolling WPM chart
+  // Draw Rolling WPM Canvas
   useEffect(() => {
     const canvas = wpmCanvasRef.current
     if (!canvas) return
-    const ctx = canvas.getContext('2d')
+    const ctx = canvas.getContext("2d")
     if (!ctx) return
-    const W = canvas.width
-    const H = canvas.height
-    ctx.clearRect(0, 0, W, H)
 
-    // Background
-    ctx.fillStyle = 'rgba(0,0,0,0.1)'
-    ctx.fillRect(0, 0, W, H)
+    const w = canvas.width
+    const h = canvas.height
+    ctx.clearRect(0, 0, w, h)
+
+    // Background grid lines
+    ctx.fillStyle = "rgba(0, 0, 0, 0.02)"
+    ctx.fillRect(0, 0, w, h)
+
+    const maxWpm = 220
+    const getY = (val: number) => h - Math.max(0, Math.min(h - 8, (val / maxWpm) * (h - 16) + 8))
+
+    // 120 WPM green line
+    ctx.strokeStyle = "rgba(34, 197, 94, 0.25)"
+    ctx.lineWidth = 1
+    ctx.setLineDash([4, 4])
+    ctx.beginPath()
+    const y120 = getY(120)
+    ctx.moveTo(0, y120)
+    ctx.lineTo(w, y120)
+    ctx.stroke()
+
+    // 180 WPM red line
+    ctx.strokeStyle = "rgba(239, 68, 68, 0.25)"
+    ctx.beginPath()
+    const y180 = getY(180)
+    ctx.moveTo(0, y180)
+    ctx.lineTo(w, y180)
+    ctx.stroke()
+    ctx.setLineDash([])
+
+    // Zone labels
+    ctx.font = "8px SFMono-Regular, Consolas, monospace"
+    ctx.fillStyle = "rgba(34, 197, 94, 0.6)"
+    ctx.fillText("120 WPM", 4, y120 - 2)
+    ctx.fillStyle = "rgba(239, 68, 68, 0.6)"
+    ctx.fillText("180 WPM", 4, y180 - 2)
 
     if (wpmHistory.length < 2) return
 
-    const maxWpm = Math.max(240, ...wpmHistory)
-    const RECOMMEND = 120
-    const FAST = 180
-
-    // Reference lines
-    const drawRefLine = (wpm: number, color: string, label: string) => {
-      const y = H - (wpm / maxWpm) * H
-      ctx.strokeStyle = color
-      ctx.lineWidth = 1
-      ctx.setLineDash([4, 4])
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke()
-      ctx.setLineDash([])
-      ctx.fillStyle = color
-      ctx.font = '10px system-ui'
-      ctx.fillText(label, 4, y - 3)
-    }
-    drawRefLine(RECOMMEND, 'rgba(0,230,118,0.7)', `${RECOMMEND} WPM`)
-    drawRefLine(FAST, 'rgba(255,107,107,0.7)', `${FAST} WPM`)
-
-    // WPM line
-    const lastWpm = wpmHistory[wpmHistory.length - 1]
-    const gradient = ctx.createLinearGradient(0, 0, 0, H)
-    gradient.addColorStop(0, lastWpm > FAST ? '#ff6b6b' : '#00e676')
-    gradient.addColorStop(1, 'rgba(0,230,118,0.1)')
-    ctx.strokeStyle = lastWpm > FAST ? '#ff6b6b' : '#00e676'
-    ctx.lineWidth = 2.5
-    ctx.shadowColor = lastWpm > FAST ? '#ff6b6b' : '#00e676'
-    ctx.shadowBlur = 8
     ctx.beginPath()
-    const step = W / (wpmHistory.length - 1)
-    wpmHistory.forEach((wpm, i) => {
+    const step = w / Math.max(1, wpmHistory.length - 1)
+    wpmHistory.forEach((val, i) => {
       const x = i * step
-      const y = H - (wpm / maxWpm) * H
-      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
+      const y = getY(val)
+      if (i === 0) ctx.moveTo(x, y)
+      else ctx.lineTo(x, y)
     })
+
+    const gradient = ctx.createLinearGradient(0, 0, 0, h)
+    const latestWpm = wpmHistory[wpmHistory.length - 1] || 0
+    if (latestWpm > 180) {
+      gradient.addColorStop(0, "rgba(239, 68, 68, 0.35)")
+      gradient.addColorStop(1, "rgba(239, 68, 68, 0.0)")
+      ctx.strokeStyle = "#ef4444"
+    } else if (latestWpm >= 110 && latestWpm <= 165) {
+      gradient.addColorStop(0, "rgba(34, 197, 94, 0.35)")
+      gradient.addColorStop(1, "rgba(34, 197, 94, 0.0)")
+      ctx.strokeStyle = "#22c55e"
+    } else {
+      gradient.addColorStop(0, "rgba(243, 125, 33, 0.35)")
+      gradient.addColorStop(1, "rgba(243, 125, 33, 0.0)")
+      ctx.strokeStyle = "#f37d21"
+    }
+    ctx.lineWidth = 2
     ctx.stroke()
-    ctx.shadowBlur = 0
+
+    ctx.lineTo((wpmHistory.length - 1) * step, h)
+    ctx.lineTo(0, h)
+    ctx.closePath()
+    ctx.fillStyle = gradient
+    ctx.fill()
   }, [wpmHistory])
 
-  // Ambient alert: >5 fillers per minute rate
+  // Timer
   useEffect(() => {
-    if (!isListening || elapsedSeconds < 10) return
-    const perMin = (liveCount / elapsedSeconds) * 60
-    setIsAmbientAlert(perMin > 5)
-  }, [liveCount, elapsedSeconds, isListening])
-
-  useEffect(() => {
-    if (!isListening) {
-      if (timerRef.current) window.clearInterval(timerRef.current)
-      return
+    if (isListening) {
+      timerRef.current = window.setInterval(() => {
+        setElapsedSeconds((prev) => {
+          const next = prev + 1
+          elapsedSecondsRef.current = next
+          return next
+        })
+      }, 1000)
+    } else {
+      if (timerRef.current) clearInterval(timerRef.current)
+      timerRef.current = null
     }
-
-    timerRef.current = window.setInterval(() => {
-      setElapsedSeconds((sec) => {
-        const next = sec + 1
-        elapsedSecondsRef.current = next  // keep ref in sync so onresult closure has current value
-        return next
-      })
-    }, 1000)
-
-
     return () => {
-      if (timerRef.current) window.clearInterval(timerRef.current)
+      if (timerRef.current) clearInterval(timerRef.current)
     }
   }, [isListening])
 
-  const startVisualizer = async (stream: MediaStream) => {
+  // Ambient alert flash
+  useEffect(() => {
+    if (lastAlert) {
+      setIsAmbientAlert(true)
+      const t = setTimeout(() => setIsAmbientAlert(false), 2000)
+      return () => clearTimeout(t)
+    }
+  }, [lastAlert])
+
+  const startVisualizer = (stream: MediaStream) => {
     try {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
+      if (!AudioCtx) return
       const audioCtx = new AudioCtx()
+      audioContextRef.current = audioCtx
       const analyser = audioCtx.createAnalyser()
-      analyser.fftSize = 128
+      analyser.fftSize = 64
+      analyser.smoothingTimeConstant = 0.8
 
       const source = audioCtx.createMediaStreamSource(stream)
       source.connect(analyser)
-
-      audioContextRef.current = audioCtx
 
       const bufferLength = analyser.frequencyBinCount
       const freqData = new Uint8Array(bufferLength)
@@ -1962,12 +2000,11 @@ function LiveStudio({ words }: { words: string[] }) {
 
         const canvas = canvasRef.current
         if (!canvas) return
-        const ctx = canvas.getContext('2d')
+        const ctx = canvas.getContext("2d")
         if (!ctx) return
 
         ctx.clearRect(0, 0, canvas.width, canvas.height)
 
-        // 1. Draw background frequency volume bars
         const barWidth = canvas.width / bufferLength
         let x = 0
         let maxVol = 0
@@ -1981,12 +2018,11 @@ function LiveStudio({ words }: { words: string[] }) {
           x += barWidth
         }
 
-        // 2. Draw real-time oscilloscope waveform line over voice audio
-        ctx.lineWidth = 2.5
+        ctx.lineWidth = 2
         const isSpeaking = maxVol > 25
-        ctx.strokeStyle = isSpeaking ? '#00e676' : '#ff9800'
-        ctx.shadowColor = isSpeaking ? '#00e676' : 'rgba(255, 152, 0, 0.4)'
-        ctx.shadowBlur = isSpeaking ? 10 : 4
+        ctx.strokeStyle = isSpeaking ? "#00e676" : "#ff9800"
+        ctx.shadowColor = isSpeaking ? "#00e676" : "rgba(255, 152, 0, 0.4)"
+        ctx.shadowBlur = isSpeaking ? 8 : 3
         ctx.beginPath()
 
         const sliceWidth = canvas.width / bufferLength
@@ -2010,7 +2046,7 @@ function LiveStudio({ words }: { words: string[] }) {
       }
       draw()
     } catch (err) {
-      console.error('Audio visualizer error:', err)
+      console.error("Audio visualizer error:", err)
     }
   }
 
@@ -2022,176 +2058,192 @@ function LiveStudio({ words }: { words: string[] }) {
   }
 
   const startListening = async () => {
-    console.log("[LiveStudio] startListening() called");
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    console.log("[LiveStudio] SpeechRecognition available:", !!SpeechRecognition);
+    console.log("[LiveStudio] startListening() called")
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
     if (!SpeechRecognition) {
-      alert("Dein Browser unterstützt keine Echtzeit-Spracherkennung. Bitte nutze Google Chrome oder MS Edge für das Live Studio.");
-      return;
+      alert("Dein Browser unterstützt keine Echtzeit-Spracherkennung. Bitte nutze Google Chrome oder MS Edge für das Live Studio.")
+      return
     }
 
     try {
-      console.log("[LiveStudio] Requesting microphone...");
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      console.log("[LiveStudio] Microphone granted, tracks:", stream.getTracks().length);
-      void startVisualizer(stream);
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      void startVisualizer(stream)
 
-      console.log("[LiveStudio] Starting SpeechRecognition, words:", words);
-      const recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = "de-DE";
-      recognition.maxAlternatives = 3;
+      let currentSessionFinalText = ""
+
+      const recognition = new SpeechRecognition()
+      recognition.continuous = true
+      recognition.interimResults = true
+      recognition.lang = "de-DE"
+      recognition.maxAlternatives = 3
 
       recognition.onresult = (event: any) => {
-        let finalText = "";
-        let interimText = "";
+        let sessFinal = ""
+        let sessInterim = ""
+        const sessId = sessionCountRef.current
 
         for (let i = 0; i < event.results.length; i++) {
-          const res = event.results[i];
-          const isFinal = res.isFinal;
-          const primaryTranscript = res[0]?.transcript || "";
+          const res = event.results[i]
+          const isFinal = res.isFinal
+          const primaryTranscript = res[0]?.transcript || ""
 
           if (isFinal) {
-            finalText += (finalText ? " " : "") + primaryTranscript.trim();
+            sessFinal += (sessFinal ? " " : "") + primaryTranscript.trim()
           } else {
-            interimText += (interimText ? " " : "") + primaryTranscript.trim();
+            sessInterim += (sessInterim ? " " : "") + primaryTranscript.trim()
           }
 
-          // Extract all alternative texts for segment i
-          const allAlts: string[] = [];
+          // All alternatives of this segment
+          const allAlts: string[] = []
           for (let alt = 0; alt < res.length; alt++) {
-            const altText = res[alt]?.transcript;
-            if (altText) allAlts.push(altText);
+            const altText = res[alt]?.transcript
+            if (altText) allAlts.push(altText)
           }
           if (allAlts.length === 0 && primaryTranscript) {
-            allAlts.push(primaryTranscript);
+            allAlts.push(primaryTranscript)
           }
 
-          // Compute max occurrence for each search word in segment i across alternatives
-          const segExisting = segmentFillersRef.current.get(i) || {};
-          const segUpdated: Record<string, number> = { ...segExisting };
+          // Lock in maximum occurrence for each search word in this segment
+          const segKey = `${sessId}_${i}`
+          const segExisting = segmentFillersRef.current.get(segKey) || {}
+          const segUpdated: Record<string, number> = { ...segExisting }
 
           for (const w of words) {
             const bestForThisAltScan = Math.max(
               0,
               ...allAlts.map((text) => {
-                const toks = text.toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
-                return countTargetInTokens(toks, w);
+                const toks = text.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []
+                return countTargetInTokens(toks, w)
               })
-            );
-            // Lock in occurrences so even if finalized text drops hesitation sounds, they remain counted
-            segUpdated[w] = Math.max(segExisting[w] || 0, bestForThisAltScan);
+            )
+            segUpdated[w] = Math.max(segExisting[w] || 0, bestForThisAltScan)
           }
 
-          segmentFillersRef.current.set(i, segUpdated);
+          segmentFillersRef.current.set(segKey, segUpdated)
         }
 
-        // Sum counts for all words across all segments
-        const totalCounts: Record<string, number> = {};
-        for (const w of words) totalCounts[w] = 0;
+        currentSessionFinalText = sessFinal
+
+        // Combined transcript across all sessions & current interim
+        const fullTranscript = (
+          (accumulatedFinalTextRef.current ? accumulatedFinalTextRef.current + " " : "") +
+          sessFinal +
+          (sessInterim ? " " + sessInterim : "")
+        ).trim()
+
+        // Combine total counts across all stored segments of all sessions
+        const totalCounts: Record<string, number> = {}
+        for (const w of words) totalCounts[w] = 0
         segmentFillersRef.current.forEach((segCounts) => {
           for (const w of words) {
-            totalCounts[w] += (segCounts[w] || 0);
+            totalCounts[w] += (segCounts[w] || 0)
           }
-        });
+        })
 
-        const totalFiller = Object.values(totalCounts).reduce((a, b) => a + b, 0);
-        const fullTranscript = (finalText + (interimText ? " " + interimText : "")).trim();
+        const totalFiller = Object.values(totalCounts).reduce((a, b) => a + b, 0)
 
-        console.log("[LiveStudio] Transcript:", fullTranscript);
-        console.log("[LiveStudio] Total counts:", totalCounts, "Total fillers:", totalFiller);
-
-        setLiveTranscript(fullTranscript);
-        setWordCounts(totalCounts);
+        setLiveTranscript(fullTranscript)
+        setWordCounts(totalCounts)
 
         // Trigger animations & alerts when count increases
         setLiveCount((prev) => {
           if (totalFiller > prev) {
-            popCounterAnimation();
-            spawnParticles();
+            popCounterAnimation()
+            spawnParticles()
           }
-          return totalFiller;
-        });
+          return totalFiller
+        })
 
         // WPM calculation
-        const secs = elapsedSecondsRef.current;
-        const totalTokens = fullTranscript.toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
+        const secs = elapsedSecondsRef.current
+        const totalTokens = fullTranscript.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []
         if (totalTokens.length > 0 && secs > 0) {
-          const wpm = Math.round((totalTokens.length / secs) * 60);
-          setSpeechPace(wpm);
+          const wpm = Math.round((totalTokens.length / secs) * 60)
+          setSpeechPace(wpm)
           setWpmHistory((prev) => {
-            const next = [...prev, wpm];
-            return next.length > 60 ? next.slice(-60) : next;
-          });
+            const next = [...prev, wpm]
+            return next.length > 60 ? next.slice(-60) : next
+          })
         }
 
-        const lastWordMatched = words.find((w) => (totalCounts[w] || 0) > (wordCounts[w] || 0));
+        const lastWordMatched = words.find((w) => (totalCounts[w] || 0) > (wordCounts[w] || 0))
         if (lastWordMatched) {
-          setLastAlert(`Füllwort erkannt: „${lastWordMatched}"! Kurz innehalten & Stimme absenken.`);
+          setLastAlert(`Füllwort erkannt: „${lastWordMatched}"! Kurz innehalten & Stimme absenken.`)
         }
-      };
+      }
 
       recognition.onstart = () => {
-        console.log("[LiveStudio] recognition.onstart — recognition is running");
-      };
+        console.log("[LiveStudio] recognition.onstart — running")
+      }
 
       recognition.onerror = (err: any) => {
-        console.error("[LiveStudio] recognition.onerror:", err.error, err.message, err);
+        console.error("[LiveStudio] recognition.onerror:", err.error, err.message)
         if (err.error === "not-allowed") {
-          setLastAlert("Mikrofon-Zugriff verweigert. Bitte erlaube den Zugriff in den Browser-Einstellungen.");
+          setLastAlert("Mikrofon-Zugriff verweigert. Bitte erlaube den Zugriff in den Browser-Einstellungen.")
         } else if (err.error === "network") {
-          setLastAlert("Netzwerkfehler: Spracherkennung benötigt eine Internetverbindung.");
+          setLastAlert("Netzwerkfehler: Spracherkennung benötigt eine Internetverbindung.")
         } else if (err.error !== "no-speech" && err.error !== "aborted") {
-          setLastAlert(`Erkennungsfehler: ${err.error}`);
+          setLastAlert(`Erkennungsfehler: ${err.error}`)
         }
-      };
+      }
 
       recognition.onend = () => {
-        console.log("[LiveStudio] recognition.onend — restarting:", isListening);
-        if (isListening) {
-          try { recognition.start(); } catch (restartErr) {
-            console.warn("[LiveStudio] Restart failed:", restartErr);
+        console.log("[LiveStudio] recognition.onend — restarting:", isListeningRef.current)
+        if (currentSessionFinalText) {
+          accumulatedFinalTextRef.current = (
+            (accumulatedFinalTextRef.current ? accumulatedFinalTextRef.current + " " : "") +
+            currentSessionFinalText
+          ).trim()
+        }
+        sessionCountRef.current += 1
+        if (isListeningRef.current) {
+          try {
+            recognition.start()
+          } catch (restartErr) {
+            console.warn("[LiveStudio] Restart failed:", restartErr)
           }
         }
-      };
+      }
 
-      recognition.start();
-      console.log("[LiveStudio] recognition.start() called");
-      recognitionRef.current = recognition;
-      setIsListening(true);
-      setLastAlert("Live-Erkennung aktiv. Sprich frei ins Mikrofon!");
+      recognition.start()
+      recognitionRef.current = recognition
+      isListeningRef.current = true
+      setIsListening(true)
+      setLastAlert("Live-Erkennung aktiv. Sprich frei ins Mikrofon!")
     } catch (e) {
-      console.error("[LiveStudio] startListening CATCH:", e);
-      const msg = e instanceof Error ? e.message : String(e);
-      setLastAlert(`Fehler beim Starten: ${msg}`);
+      console.error("[LiveStudio] startListening CATCH:", e)
+      const msg = e instanceof Error ? e.message : String(e)
+      setLastAlert(`Fehler beim Starten: ${msg}`)
     }
-  };
+  }
 
   const stopListening = () => {
+    isListeningRef.current = false
     if (recognitionRef.current) {
-      recognitionRef.current.stop();
-      recognitionRef.current = null;
+      recognitionRef.current.stop()
+      recognitionRef.current = null
     }
-    stopVisualizer();
-    setIsListening(false);
-  };
+    stopVisualizer()
+    setIsListening(false)
+  }
 
   const resetLiveSession = () => {
-    stopListening();
-    setLiveCount(0);
-    setWordCounts({});
-    setLiveTranscript("");
-    setLastAlert(null);
-    setElapsedSeconds(0);
-    setSpeechPace(0);
-    setWpmHistory([]);
-    setIsAmbientAlert(false);
-    segmentFillersRef.current.clear();
-    particlesRef.current = [];
-    const ctx = particleCanvasRef.current?.getContext("2d");
-    if (ctx && particleCanvasRef.current) ctx.clearRect(0, 0, particleCanvasRef.current.width, particleCanvasRef.current.height);
-  };
+    stopListening()
+    setLiveCount(0)
+    setWordCounts({})
+    setLiveTranscript("")
+    setLastAlert(null)
+    setElapsedSeconds(0)
+    setSpeechPace(0)
+    setWpmHistory([])
+    setIsAmbientAlert(false)
+    sessionCountRef.current = 0
+    accumulatedFinalTextRef.current = ""
+    segmentFillersRef.current.clear()
+    particlesRef.current = []
+    const ctx = particleCanvasRef.current?.getContext("2d")
+    if (ctx && particleCanvasRef.current) ctx.clearRect(0, 0, particleCanvasRef.current.width, particleCanvasRef.current.height)
+  }
 
   return (
     <section className="live-studio-view">
@@ -2199,7 +2251,7 @@ function LiveStudio({ words }: { words: string[] }) {
         <div className="live-studio-header-titles">
           <span className="eyebrow">ECHTZEIT-SPRECHFLUSS-TRAINER</span>
           <h1>🔴 Live Studio — <em>Präsentation live üben</em></h1>
-          <p className="intro-copy">Sprich frei ins Mikrofon. Füllwörter werden live gezählt, dein Ton als Wave visualisiert & dein Tempo getracked.</p>
+          <p className="intro-copy">Sprich frei ins Mikrofon. Füllwörter werden live gezählt, Wave & Tempo getracked.</p>
         </div>
         <div className="live-header-status-badge">
           <span className={isListening ? "live-mic-dot recording" : "live-mic-dot"} />
@@ -2217,24 +2269,24 @@ function LiveStudio({ words }: { words: string[] }) {
               <div className="flip-counter-display">
                 <span ref={counterRef} className="flip-counter-number">{String(liveCount).padStart(2, "0")}</span>
               </div>
-              <canvas ref={particleCanvasRef} width={200} height={120} className="particle-canvas" />
+              <canvas ref={particleCanvasRef} width={180} height={90} className="particle-canvas" />
             </div>
 
             <div className="audio-visualizer-box" title="Echtzeit-Audio-Waveform deines Mikrofons">
-              <div className="wave-label"><span>WAVE-SIGNAL DEINER STIMME</span></div>
-              <canvas ref={canvasRef} width={280} height={52} className="audio-visualizer-canvas" />
+              <div className="wave-label"><span>WAVE-SIGNAL</span></div>
+              <canvas ref={canvasRef} width={260} height={42} className="audio-visualizer-canvas" />
             </div>
 
             <div className="live-status-indicator">
               <span className={isListening ? "live-mic-dot recording" : "live-mic-dot"} />
-              <span>{isListening ? "Mikrofon aktiv · Stimmsignal wird verarbeitet" : "Mikrofon im Standby"}</span>
+              <span>{isListening ? "Mikrofon aktiv" : "Standby"}</span>
             </div>
           </div>
 
           <div className="live-controls">
             {!isListening ? (
               <button type="button" className="live-start-button" onClick={startListening}>
-                <span>🎙️ Live-Session starten</span>
+                <span>🎙️ Starten</span>
               </button>
             ) : (
               <button type="button" className="live-stop-button" onClick={stopListening}>
@@ -2266,31 +2318,31 @@ function LiveStudio({ words }: { words: string[] }) {
             </div>
             <div className="live-stat-card">
               <b>Sprechtempo</b>
-              <strong>{speechPace} <span style={{ fontSize: "13px", fontWeight: 400 }}>WPM</span></strong>
+              <strong>{speechPace} <span style={{ fontSize: "12px", fontWeight: 400 }}>WPM</span></strong>
             </div>
           </div>
 
           {/* WPM Rolling Chart */}
           <div className="wpm-chart-box">
             <div className="wpm-chart-label">📈 Sprechtempo-Verlauf (letzte 60 Sek.)</div>
-            <canvas ref={wpmCanvasRef} width={460} height={70} className="wpm-chart-canvas" />
+            <canvas ref={wpmCanvasRef} width={460} height={55} className="wpm-chart-canvas" />
             {wpmHistory.length < 2 && (
-              <div className="wpm-chart-hint">Sprich ins Mikrofon — der Tempo-Graph erscheint hier in Echtzeit</div>
+              <div className="wpm-chart-hint">Sprich ins Mikrofon — der Tempo-Graph erscheint in Echtzeit</div>
             )}
           </div>
 
-          {/* Live Transcript Box - Front & Center */}
+          {/* Live Transcript Stream */}
           <div className="live-transcript-box" ref={transcriptBoxRef}>
             <div className="live-transcript-header">
-              <span className="live-transcript-title">🎙️ Live Transkript-Stream</span>
+              <span className="live-transcript-title">🎙️ Live Transkript</span>
               <span className="live-transcript-wordcount">
-                {liveTranscript ? `${(liveTranscript.match(/[\p{L}\p{N}]+/gu) || []).length} Wörter erfasst` : "Warten auf Sprache..."}
+                {liveTranscript ? `${(liveTranscript.match(/[\p{L}\p{N}]+/gu) || []).length} Wörter` : "Warten auf Sprache..."}
               </span>
             </div>
             <p className="transcript-text">
               {liveTranscript || (
                 <span className="transcript-placeholder">
-                  {isListening ? '🎙️ Spracherkennung lauscht... Sprich frei drauflos!' : 'Noch keine Sprache erfasst. Klicke links auf „Live-Session starten“ und sprich ins Mikrofon.'}
+                  {isListening ? "🎙️ Spracherkennung lauscht... Sprich frei drauflos!" : "Klicke links auf „Starten“ und sprich ins Mikrofon."}
                 </span>
               )}
             </p>
@@ -2312,7 +2364,7 @@ function LiveStudio({ words }: { words: string[] }) {
         </div>
       </div>
     </section>
-  );
+  )
 }
 
-export default App;
+export default App
