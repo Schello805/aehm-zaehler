@@ -654,32 +654,40 @@ ${advice.summary}
   }, [url])
 
   useEffect(() => {
+    if (fetchedMediaInfo?.duration && fetchedMediaInfo.duration > 0) {
+      const estimate = getEstimatedAnalysisSeconds(fetchedMediaInfo.duration)
+      setProgress((current) => ({ ...current, remainingSeconds: estimate }))
+      return
+    }
+
     if (!file && !url) {
       return
     }
 
-    const source = file ? URL.createObjectURL(file) : url
-    const media = new Audio(source)
+    if (file) {
+      const source = URL.createObjectURL(file)
+      const media = new Audio(source)
 
-    const onLoadedMetadata = () => {
-      const duration = Number.isFinite(media.duration) ? media.duration : null
-      const estimate = getEstimatedAnalysisSeconds(duration ?? undefined)
-      setProgress((current) => ({ ...current, remainingSeconds: estimate }))
+      const onLoadedMetadata = () => {
+        const duration = Number.isFinite(media.duration) ? media.duration : null
+        const estimate = getEstimatedAnalysisSeconds(duration ?? undefined)
+        setProgress((current) => ({ ...current, remainingSeconds: estimate }))
+      }
+
+      media.preload = 'metadata'
+      media.addEventListener('loadedmetadata', onLoadedMetadata)
+      media.addEventListener('error', () => {
+        setProgress((current) => ({ ...current, remainingSeconds: defaultEstimatedAnalysisSeconds }))
+      })
+
+      media.load()
+
+      return () => {
+        media.removeEventListener('loadedmetadata', onLoadedMetadata)
+        URL.revokeObjectURL(source)
+      }
     }
-
-    media.preload = 'metadata'
-    media.addEventListener('loadedmetadata', onLoadedMetadata)
-    media.addEventListener('error', () => {
-      setProgress((current) => ({ ...current, remainingSeconds: defaultEstimatedAnalysisSeconds }))
-    })
-
-    media.load()
-
-    return () => {
-      media.removeEventListener('loadedmetadata', onLoadedMetadata)
-      if (file) URL.revokeObjectURL(source)
-    }
-  }, [file, url])
+  }, [file, url, fetchedMediaInfo?.duration])
 
   const activeHistoryEntry = useMemo(
     () => (activeHistoryId ? history.find((entry) => entry.id === activeHistoryId) : null),
@@ -837,7 +845,15 @@ ${advice.summary}
     setError('')
     setResult(null)
     setActiveHistoryId(null)
-    setProgress({ percent: 5, step: 0, label: url ? 'Lade Video von YouTube...' : 'Audiodatei wird vorbereitet...', remainingSeconds: null })
+    const initialDuration = fetchedMediaInfo?.duration || 0
+    const initialRemaining = initialDuration > 0 ? getEstimatedAnalysisSeconds(initialDuration) : defaultEstimatedAnalysisSeconds
+
+    setProgress({
+      percent: 5,
+      step: 0,
+      label: url ? 'Lade Video von YouTube...' : 'Audiodatei wird vorbereitet...',
+      remainingSeconds: initialRemaining,
+    })
 
     const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     currentJobIdRef.current = jobId
@@ -864,16 +880,21 @@ ${advice.summary}
       }
 
       if (data.percent !== undefined) {
-        const remainingSeconds = data.duration && data.currentTime && data.currentTime > 0
-          ? Math.max(0, Math.round((data.duration - data.currentTime) * 1.0))
-          : null
+        const totalDuration = Number(data.duration || fetchedMediaInfo?.duration || 0)
+        let remainingSeconds: number | null = null
+        if (totalDuration > 0 && data.currentTime && data.currentTime > 0) {
+          const remainingAudio = Math.max(0, totalDuration - Number(data.currentTime))
+          remainingSeconds = Math.max(1, Math.round(remainingAudio * 0.35))
+        } else if (totalDuration > 0) {
+          remainingSeconds = getEstimatedAnalysisSeconds(totalDuration)
+        }
 
-        setProgress({
-          percent: data.percent || 10,
+        setProgress((prev) => ({
+          percent: data.percent || prev.percent,
           step: 2,
-          label: `Whisper KI analysiert... (${Math.round(data.currentTime || 0)}s / ${Math.round(data.duration || 0)}s)`,
-          remainingSeconds,
-        })
+          label: `Whisper KI analysiert... (${Math.round(data.currentTime || 0)}s / ${Math.round(totalDuration || data.duration || 0)}s)`,
+          remainingSeconds: remainingSeconds !== null ? remainingSeconds : prev.remainingSeconds,
+        }))
       }
 
       if (data.text || (data.segments && data.segments.length > 0)) {
