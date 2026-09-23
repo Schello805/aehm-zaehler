@@ -2816,39 +2816,75 @@ function Settings({
         <div className="presets-container">
           <span className="presets-label">⚡ Schnell-Vorlagen / Presets:</span>
           <div className="presets-btn-group">
-            <button
-              type="button"
-              className="preset-tag-btn"
-              onClick={() => {
-                const classic = ['äh', 'ähm', 'öh', 'hm', 'mhm']
-                setWords(Array.from(new Set([...words, ...classic])))
-              }}
-              title="Klassische Zögerlaute hinzufügen"
-            >
-              🎯 Klassisch (+5)
-            </button>
-            <button
-              type="button"
-              className="preset-tag-btn"
-              onClick={() => {
-                const rhetoric = ['eigentlich', 'sozusagen', 'quasi', 'im endeffekt', 'praktisch', 'gewissermaßen', 'am ende des tages', 'ich sag mal']
-                setWords(Array.from(new Set([...words, ...rhetoric])))
-              }}
-              title="Rhetorische Weichmacher & Floskeln hinzufügen"
-            >
-              💬 Rhetorik & Weichmacher (+8)
-            </button>
-            <button
-              type="button"
-              className="preset-tag-btn"
-              onClick={() => {
-                const dups = ['ich ich', 'wir wir', 'und und', 'aber aber', 'also also', 'dann dann']
-                setWords(Array.from(new Set([...words, ...dups])))
-              }}
-              title="Wortdopplungen hinzufügen"
-            >
-              🔁 Wortdopplungen (+6)
-            </button>
+            {[
+              {
+                id: 'classic',
+                label: 'Klassisch',
+                icon: '🎯',
+                words: ['äh', 'ähm', 'öh', 'hm', 'mhm'],
+              },
+              {
+                id: 'rhetoric',
+                label: 'Rhetorik & Weichmacher',
+                icon: '💬',
+                words: ['eigentlich', 'sozusagen', 'quasi', 'im endeffekt', 'praktisch', 'gewissermaßen', 'am ende des tages', 'ich sag mal'],
+              },
+              {
+                id: 'dups',
+                label: 'Wortdopplungen',
+                icon: '🔁',
+                words: ['ich ich', 'wir wir', 'und und', 'aber aber', 'also also', 'dann dann'],
+              },
+            ].map((preset) => {
+              const normalizedPreset = preset.words.map((w) => w.trim().toLowerCase())
+              const currentNormalized = words.map((w) => w.trim().toLowerCase())
+              const presentCount = normalizedPreset.filter((w) => currentNormalized.includes(w)).length
+              const isAllActive = presentCount === normalizedPreset.length
+              const isPartial = presentCount > 0 && !isAllActive
+              const missingCount = normalizedPreset.length - presentCount
+
+              const handleToggle = () => {
+                if (isAllActive) {
+                  // Toggle OFF: remove these preset words
+                  const remaining = words.filter((w) => !normalizedPreset.includes(w.trim().toLowerCase()))
+                  setWords(remaining.length > 0 ? remaining : ['äh', 'ähm'])
+                } else {
+                  // Add only missing words
+                  const newWords = [...words]
+                  normalizedPreset.forEach((w) => {
+                    if (!newWords.some((existing) => existing.trim().toLowerCase() === w)) {
+                      newWords.push(w)
+                    }
+                  })
+                  setWords(newWords)
+                }
+              }
+
+              return (
+                <button
+                  key={preset.id}
+                  type="button"
+                  className={`preset-tag-btn ${isAllActive ? 'active' : isPartial ? 'partial' : ''}`}
+                  onClick={handleToggle}
+                  title={
+                    isAllActive
+                      ? `Alle ${preset.words.length} Wörter aktiv. Klicken zum Abwählen.`
+                      : isPartial
+                      ? `${presentCount} bereits aktiv, ${missingCount} fehlende hinzufügen.`
+                      : `Alle ${preset.words.length} Wörter hinzufügen.`
+                  }
+                >
+                  <span>{preset.icon}</span>
+                  <span>
+                    {isAllActive
+                      ? `✓ ${preset.label} (${preset.words.length})`
+                      : isPartial
+                      ? `+ ${preset.label} (+${missingCount})`
+                      : `${preset.label} (+${preset.words.length})`}
+                  </span>
+                </button>
+              )
+            })}
             <button
               type="button"
               className="preset-tag-btn preset-tag-reset"

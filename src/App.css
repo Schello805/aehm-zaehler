@@ -3447,7 +3447,10 @@ body { transition: background 0.35s ease, color 0.35s ease; }
 }
 
 .preset-tag-btn {
-  padding: 6px 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
   border-radius: 20px;
   border: 1px solid var(--line);
   background: var(--panel);
@@ -3460,18 +3463,51 @@ body { transition: background 0.35s ease, color 0.35s ease; }
 
 .preset-tag-btn:hover {
   border-color: var(--red);
-  background: #fff;
+  background: var(--bg);
   transform: translateY(-1px);
+}
+
+.preset-tag-btn.active {
+  background: rgba(16, 185, 129, 0.12);
+  border-color: #10b981;
+  color: #10b981;
+  font-weight: 700;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.2);
+}
+
+.preset-tag-btn.partial {
+  background: rgba(59, 130, 246, 0.1);
+  border-color: #3b82f6;
+  color: #3b82f6;
+  font-weight: 600;
 }
 
 .preset-tag-reset {
   color: var(--muted);
+  border-style: dashed;
+}
+
+.preset-tag-reset:hover {
+  border-color: var(--ink);
+  border-style: solid;
 }
 
 :root[data-theme="dark"] .preset-tag-btn {
   background: rgba(255, 255, 255, 0.06);
   border-color: rgba(255, 255, 255, 0.15);
   color: #fff;
+}
+
+:root[data-theme="dark"] .preset-tag-btn.active {
+  background: rgba(16, 185, 129, 0.25);
+  border-color: #34d399;
+  color: #34d399;
+}
+
+:root[data-theme="dark"] .preset-tag-btn.partial {
+  background: rgba(59, 130, 246, 0.25);
+  border-color: #60a5fa;
+  color: #60a5fa;
 }
 
 :root[data-theme="dark"] .preset-tag-btn:hover {
