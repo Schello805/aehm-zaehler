@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
+import { RankingView } from './components/RankingView'
 import { defaultEstimatedAnalysisSeconds, getEstimatedAnalysisSeconds } from './progress'
 
 declare global {
@@ -23,7 +24,7 @@ const countWordOccurrences = (text: string, word: string) => {
   return matches
 }
 
-type SpeakerStats = {
+export type SpeakerStats = {
   id: string
   name: string
   gender?: 'm' | 'w' | 'unknown'
@@ -37,7 +38,7 @@ type SpeakerStats = {
   color: string
 }
 
-type TranscriptSegment = {
+export type TranscriptSegment = {
   start: number
   end: number
   text: string
@@ -49,7 +50,7 @@ type TranscriptSegment = {
   speakerGender?: 'm' | 'w' | 'unknown'
 }
 
-type Result = {
+export type Result = {
   counts: Record<string, number>
   fillerWords: number
   baseFillerWords: number
@@ -57,6 +58,8 @@ type Result = {
   relativeRate: number
   duration: number
   text: string
+  wpm?: number
+  topWords?: Array<{ word: string; count: number }>
   segments: TranscriptSegment[]
   speakers?: Record<string, SpeakerStats>
   mediaTitle?: string
@@ -215,7 +218,7 @@ type ProgressState = {
   remainingSeconds: number | null
 }
 
-type HistoryEntry = {
+export type HistoryEntry = {
   id: string
   source: string
   sourceLabel: string
@@ -289,7 +292,7 @@ const getOptimizationAdvice = (result: Result) => {
 }
 
 function App() {
-  const [view, setView] = useState<'analyse' | 'live' | 'settings'>('analyse')
+  const [view, setView] = useState<'analyse' | 'ranking' | 'live' | 'settings'>('analyse')
   const [darkMode, setDarkMode] = useState<boolean>(() => localStorage.getItem('dark-mode') === 'true')
   const [words, setWords] = useState<string[]>(() => {
     try {
@@ -471,6 +474,17 @@ function App() {
   useEffect(() => {
     try {
       const params = new URLSearchParams(window.location.search)
+      const viewParam = params.get('view')
+      const hash = window.location.hash.replace('#', '')
+
+      if (viewParam === 'ranking' || hash === 'ranking') {
+        setView('ranking')
+      } else if (viewParam === 'live' || hash === 'live') {
+        setView('live')
+      } else if (viewParam === 'settings' || hash === 'settings') {
+        setView('settings')
+      }
+
       const vParam = params.get('v')
       const urlParam = params.get('url')
       const initial = urlParam || (vParam ? `https://www.youtube.com/watch?v=${vParam}` : '')
@@ -1726,7 +1740,10 @@ ${advice.summary}
           <span className="brand-title">ähm-zähler</span>
         </button>
         <div className="nav-actions">
-          <button className={view === 'analyse' ? 'nav-link active' : 'nav-link'} onClick={() => setView('analyse')} type="button">Analyse</button>
+          <button className={view === 'analyse' ? 'nav-link active' : 'nav-link'} onClick={() => setView('analyse')} type="button">🎙️ Analyse</button>
+          <button className={view === 'ranking' ? 'nav-link active ranking-tab-link' : 'nav-link ranking-tab-link'} onClick={() => setView('ranking')} type="button">
+            🏆 Ähm-Ranking <span className="ranking-badge-pill">Top</span>
+          </button>
           <button className={view === 'live' ? 'nav-link active' : 'nav-link'} onClick={() => setView('live')} type="button">🔴 Live Studio</button>
           <button className={view === 'settings' ? 'nav-link active' : 'nav-link'} onClick={() => setView('settings')} type="button">Settings</button>
           {installPrompt && (
@@ -1778,6 +1795,23 @@ ${advice.summary}
           setEditValue={setEditValue}
           addWord={addWord}
           saveWord={saveWord}
+        />
+      ) : view === 'ranking' ? (
+        <RankingView
+          history={history}
+          onOpenAnalysis={(entry, autoStartSupercut) => {
+            setResult(ensureMultiSpeakerDiarization(entry.result, entry.words || words))
+            setActiveHistoryId(entry.id)
+            setUrl(entry.source.startsWith('http') ? entry.source : '')
+            setFile(null)
+            setView('analyse')
+            if (autoStartSupercut) {
+              setTimeout(() => {
+                setIsSupercutActive(true)
+              }, 400)
+            }
+          }}
+          onGoToAnalysis={() => setView('analyse')}
         />
       ) : view === 'live' ? (
         <LiveStudio
@@ -2839,7 +2873,7 @@ ${advice.summary}
           <AppFooter />
         </>
       )}
-      {view === 'settings' && <AppFooter />}
+      {(view === 'settings' || view === 'ranking') && <AppFooter />}
 
       {/* Self-Host & Queue Modal */}
       {(queueInfo || showSelfHostModal) && (
