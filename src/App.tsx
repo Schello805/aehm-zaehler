@@ -340,34 +340,43 @@ function App() {
     setActiveHistoryId(null)
     setProgress({ percent: 5, step: 0, label: url ? 'Lade Video von YouTube...' : 'Audiodatei wird vorbereitet...', remainingSeconds: null })
 
+    console.log('[Analyze] Starting analysis...', { file: file?.name, url, words })
     const body = new FormData()
     body.append('words', JSON.stringify(words))
     if (file) body.append('file', file)
     if (url) body.append('url', url)
 
     try {
+      console.log('[Analyze] Sending POST /api/analyze...')
       const response = await fetch('/api/analyze', {
         method: 'POST',
         body,
         signal: controller.signal,
       })
 
+      console.log('[Analyze] Response received:', {
+        status: response.status,
+        statusText: response.statusText,
+        contentType: response.headers.get('content-type'),
+      })
+
       if (!response.ok) {
         let errorMsg = `Server-Fehler (${response.status})`
         try {
           const text = await response.text()
+          console.error('[Analyze] Server error response body:', text)
           try {
             const json = JSON.parse(text)
             if (json.error) errorMsg = json.error
           } catch {
-            if (text && text.length < 200) errorMsg = text
+            if (text && text.length < 300) errorMsg = text
           }
         } catch {}
         throw new Error(errorMsg)
       }
 
       if (!response.body) {
-        throw new Error('Keine Antwort vom Server erhalten.')
+        throw new Error('Keine Antwortdaten vom Server erhalten.')
       }
 
       const reader = response.body.getReader()
@@ -385,6 +394,7 @@ function App() {
 
         for (const line of lines) {
           const trimmed = line.trim()
+          if (!trimmed || trimmed.startsWith(':')) continue // Ignore keepalive pings
           if (!trimmed.startsWith('data:')) continue
           const payload = trimmed.replace(/^data:\s*/, '')
           if (!payload) continue
@@ -392,9 +402,12 @@ function App() {
           let event: any
           try {
             event = JSON.parse(payload)
-          } catch {
+          } catch (e) {
+            console.warn('[Analyze] Could not parse SSE line:', payload, e)
             continue
           }
+
+          console.log('[Analyze] SSE Event:', event.type, event)
 
           if (event.type === 'status') {
             setProgress((prev) => ({
@@ -428,6 +441,7 @@ function App() {
           } else if (event.type === 'complete') {
             streamFinished = true
             const finalResult = event.result
+            console.log('[Analyze] Complete! Final result:', finalResult)
             setResult(finalResult)
             setProgress({ percent: 100, step: progressSteps.length - 1, label: 'Ergebnis fertig', remainingSeconds: 0 })
 
@@ -447,6 +461,7 @@ function App() {
             setHistory((current) => [historyEntry, ...current].slice(0, 50))
             setActiveHistoryId(historyEntry.id)
           } else if (event.type === 'error') {
+            console.error('[Analyze] Server returned error event:', event.error)
             throw new Error(event.error || 'Analyse fehlgeschlagen.')
           }
         }
@@ -457,9 +472,11 @@ function App() {
       }
     } catch (requestError) {
       if (requestError instanceof DOMException && requestError.name === 'AbortError') {
+        console.log('[Analyze] User aborted analysis.')
         setProgress({ percent: 0, step: 0, label: 'Analyse abgebrochen', remainingSeconds: null })
         return
       }
+      console.error('[Analyze] Catch error:', requestError)
       setError(requestError instanceof Error ? requestError.message : 'Analyse fehlgeschlagen.')
       setProgress({ percent: 0, step: 0, label: 'Fehler', remainingSeconds: 0 })
     } finally {

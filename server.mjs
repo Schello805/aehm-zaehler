@@ -1,13 +1,11 @@
 import express from 'express'
 import multer from 'multer'
 import { create as createYoutubeDl } from 'youtube-dl-exec'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
-import { writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-
 import { existsSync } from 'node:fs'
 
 const app = express()
@@ -26,8 +24,23 @@ const getYtDlpPath = () => {
 const youtubedl = createYoutubeDl(getYtDlpPath())
 const runCommand = promisify(execFile)
 const projectRoot = process.cwd()
-const localPythonPath = join(projectRoot, '.venv', 'bin', 'python')
-const localTranscriptionScript = join(projectRoot, 'transcribe_local.py')
+
+const getPythonPath = () => {
+  if (process.env.PYTHON_PATH && existsSync(process.env.PYTHON_PATH)) return process.env.PYTHON_PATH
+  const venvPython = join(projectRoot, '.venv', 'bin', 'python')
+  if (existsSync(venvPython)) return venvPython
+  const venvPython3 = join(projectRoot, '.venv', 'bin', 'python3')
+  if (existsSync(venvPython3)) return venvPython3
+  if (existsSync('/opt/aehm-zaehler/.venv/bin/python')) return '/opt/aehm-zaehler/.venv/bin/python'
+  return 'python3'
+}
+
+const getTranscriptionScript = () => {
+  const localScript = join(projectRoot, 'transcribe_local.py')
+  if (existsSync(localScript)) return localScript
+  if (existsSync('/opt/aehm-zaehler/transcribe_local.py')) return '/opt/aehm-zaehler/transcribe_local.py'
+  return localScript
+}
 
 const commonYtDlpOptions = {
   noPlaylist: true,
@@ -98,6 +111,7 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
   let temporaryDirectory
   let childProcess = null
   let isAborted = false
+  let heartbeat = null
 
   response.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
@@ -105,6 +119,15 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
     'Connection': 'keep-alive',
     'X-Accel-Buffering': 'no',
   })
+  response.write(': connected\n\n')
+  if (typeof response.flush === 'function') response.flush()
+
+  heartbeat = setInterval(() => {
+    if (!response.writableEnded && !isAborted) {
+      response.write(': ping\n\n')
+      if (typeof response.flush === 'function') response.flush()
+    }
+  }, 3000)
 
   const sendEvent = (data) => {
     if (response.writableEnded || isAborted) return
@@ -114,6 +137,7 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
 
   request.on('close', () => {
     isAborted = true
+    if (heartbeat) clearInterval(heartbeat)
     if (childProcess) {
       try {
         childProcess.kill('SIGKILL')
@@ -122,7 +146,7 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
   })
 
   try {
-    console.log('[analyze] Request received')
+    console.log('[analyze] Request received at', new Date().toISOString())
     temporaryDirectory = await mkdtemp(join(tmpdir(), 'aehmzaehler-'))
     console.log('[analyze] Temp dir:', temporaryDirectory)
 
@@ -135,15 +159,27 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
       sendEvent({ type: 'status', stage: 'download', message: 'Lade Video / Audio von YouTube herunter...' })
 
       const output = join(temporaryDirectory, 'audio.%(ext)s')
-      await youtubedl(request.body.url, {
-        ...commonYtDlpOptions,
-        extractAudio: true,
-        audioFormat: 'mp3',
-        output,
-      }, { timeout: 10 * 60 * 1000 })
-      const downloadedFile = join(temporaryDirectory, 'audio.mp3')
-      file = { buffer: await readFile(downloadedFile), originalname: 'linked-media.mp3', mimetype: 'audio/mpeg' }
-      console.log('[analyze] Download complete, size:', file.buffer.length)
+      try {
+        await youtubedl(request.body.url, {
+          ...commonYtDlpOptions,
+          extractAudio: true,
+          audioFormat: 'mp3',
+          output,
+        }, { timeout: 10 * 60 * 1000 })
+      } catch (dlErr) {
+        const msg = dlErr instanceof Error ? dlErr.message : String(dlErr)
+        console.error('[analyze] yt-dlp Fehler:', msg)
+        throw new Error(`YouTube-Download fehlgeschlagen: ${msg.split('\n')[0]}`)
+      }
+
+      const dirFiles = await readdir(temporaryDirectory)
+      const downloadedFileName = dirFiles.find((f) => f.startsWith('audio.'))
+      if (!downloadedFileName) {
+        throw new Error('Die heruntergeladene Audiodatei konnte im temporären Verzeichnis nicht gefunden werden.')
+      }
+      const downloadedFilePath = join(temporaryDirectory, downloadedFileName)
+      file = { buffer: await readFile(downloadedFilePath), originalname: 'linked-media.mp3', mimetype: 'audio/mpeg' }
+      console.log('[analyze] Download complete, file:', downloadedFileName, 'size:', file.buffer.length)
     }
 
     if (!file) {
@@ -166,6 +202,11 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
     const workingAudioPath = join(temporaryDirectory, 'prepared-audio.mp3')
     await writeFile(workingAudioPath, file.buffer)
 
+    const pythonPath = getPythonPath()
+    const scriptPath = getTranscriptionScript()
+    console.log('[analyze] Using Python:', pythonPath, 'exists:', existsSync(pythonPath))
+    console.log('[analyze] Using Script:', scriptPath, 'exists:', existsSync(scriptPath))
+
     sendEvent({ type: 'status', stage: 'transcribing', message: 'Whisper KI transkribiert Audio...' })
 
     await new Promise((resolve, reject) => {
@@ -175,7 +216,7 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
       let stdoutBuffer = ''
       let stderrBuffer = ''
 
-      childProcess = spawn(localPythonPath, [localTranscriptionScript, workingAudioPath, words.join(',')])
+      childProcess = spawn(pythonPath, [scriptPath, workingAudioPath, words.join(',')])
 
       childProcess.stdout.on('data', (chunk) => {
         stdoutBuffer += chunk.toString()
@@ -299,6 +340,7 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
     sendEvent({ type: 'error', error: message })
     return response.end()
   } finally {
+    if (heartbeat) clearInterval(heartbeat)
     if (typeof temporaryDirectory === 'string') await rm(temporaryDirectory, { recursive: true, force: true })
   }
 })
