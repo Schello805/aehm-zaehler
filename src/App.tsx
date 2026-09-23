@@ -347,37 +347,51 @@ function App() {
 
     let isMounted = true
     let playerInstance: any = null
+    let attempts = 0
 
-    const connectPlayer = () => {
-      if (!isMounted) return
-      if (window.YT && window.YT.Player) {
+    const tryConnect = () => {
+      if (!isMounted) return false
+      const el = document.getElementById('youtube-sync-iframe')
+      if (el && window.YT && window.YT.Player) {
         try {
-          const el = document.getElementById('youtube-sync-iframe')
-          if (el) {
-            playerInstance = new window.YT.Player('youtube-sync-iframe', {
-              events: {
-                onReady: (event: any) => {
-                  if (isMounted) setYtPlayer(event.target)
-                },
+          playerInstance = new window.YT.Player('youtube-sync-iframe', {
+            events: {
+              onReady: (event: any) => {
+                if (isMounted) setYtPlayer(event.target)
               },
-            })
-          }
+              onStateChange: (event: any) => {
+                if (event?.target && isMounted) {
+                  setYtPlayer(event.target)
+                }
+              },
+            },
+          })
+          return true
         } catch (err) {
-          console.warn('YouTube Player Connect:', err)
+          console.warn('YouTube Player Connect Attempt:', err)
         }
       }
+      return false
     }
 
-    const timer = setTimeout(connectPlayer, 150)
+    const interval = setInterval(() => {
+      attempts++
+      if (tryConnect() || attempts > 30) {
+        clearInterval(interval)
+      }
+    }, 200)
+
     if (window.YT && window.YT.Player) {
-      connectPlayer()
+      tryConnect()
     } else {
-      window.onYouTubeIframeAPIReady = connectPlayer
+      window.onYouTubeIframeAPIReady = () => {
+        tryConnect()
+      }
     }
 
     return () => {
       isMounted = false
-      clearTimeout(timer)
+      clearInterval(interval)
       if (playerInstance && typeof playerInstance.destroy === 'function') {
         try { playerInstance.destroy() } catch {}
       }
@@ -546,39 +560,75 @@ function App() {
   useEffect(() => {
     if (!isSupercutActive || !fillerSegments.length) return
 
-    let lastIndex = 0
-    setSupercutCurrentIndex(0)
-    seekAndPlay(Math.max(0, fillerSegments[0].start - 0.1))
+    let currentIndex = 0
+    let snippetTimer: any = null
+    let pollTimer: any = null
+    let isAdvancing = false
 
-    const interval = window.setInterval(() => {
+    const playSnippet = (index: number) => {
+      if (index >= fillerSegments.length) {
+        setIsSupercutActive(false)
+        return
+      }
+
+      currentIndex = index
+      setSupercutCurrentIndex(index)
+      const seg = fillerSegments[index]
+      if (!seg) return
+
+      const startTime = Math.max(0, seg.start - 0.15)
+      const snippetDuration = Math.min(3.5, Math.max(0.9, (seg.end - seg.start) + 0.35))
+      seekAndPlay(startTime)
+
+      if (snippetTimer) clearTimeout(snippetTimer)
+
+      // Fallback timer: guarantees advancement even if playback events lag or are silent
+      snippetTimer = setTimeout(() => {
+        advanceNext()
+      }, snippetDuration * 1000)
+    }
+
+    const advanceNext = () => {
+      if (isAdvancing) return
+      isAdvancing = true
+      if (snippetTimer) clearTimeout(snippetTimer)
+
+      const nextIndex = currentIndex + 1
+      if (nextIndex < fillerSegments.length) {
+        setTimeout(() => {
+          isAdvancing = false
+          playSnippet(nextIndex)
+        }, 60)
+      } else {
+        setIsSupercutActive(false)
+      }
+    }
+
+    // Begin playback with the first filler
+    playSnippet(0)
+
+    // Watch real-time playback position
+    pollTimer = setInterval(() => {
       let currentTime = 0
-      let isPaused = true
-
       if (ytPlayer && typeof ytPlayer.getCurrentTime === 'function') {
-        try {
-          currentTime = ytPlayer.getCurrentTime() || 0
-          const state = typeof ytPlayer.getPlayerState === 'function' ? ytPlayer.getPlayerState() : -1
-          isPaused = state !== 1 // 1 is PLAYING
-        } catch {}
+        try { currentTime = ytPlayer.getCurrentTime() || 0 } catch {}
       } else if (playbackRef.current) {
         currentTime = playbackRef.current.currentTime || 0
-        isPaused = playbackRef.current.paused
       }
 
-      if (isPaused) return
-      setActivePlayTime(currentTime)
-
-      const currentSeg = fillerSegments[lastIndex]
-      if (currentSeg && currentTime >= currentSeg.end + 0.35) {
-        const nextIndex = (lastIndex + 1) % fillerSegments.length
-        lastIndex = nextIndex
-        setSupercutCurrentIndex(nextIndex)
-        const nextSeg = fillerSegments[nextIndex]
-        seekAndPlay(Math.max(0, nextSeg.start - 0.1))
+      if (currentTime > 0) {
+        setActivePlayTime(currentTime)
+        const currentSeg = fillerSegments[currentIndex]
+        if (currentSeg && currentTime >= currentSeg.end + 0.25 && !isAdvancing) {
+          advanceNext()
+        }
       }
-    }, 120)
+    }, 100)
 
-    return () => window.clearInterval(interval)
+    return () => {
+      if (snippetTimer) clearTimeout(snippetTimer)
+      if (pollTimer) clearInterval(pollTimer)
+    }
   }, [isSupercutActive, fillerSegments, ytPlayer])
 
   const downloadCleanAudio = async () => {
