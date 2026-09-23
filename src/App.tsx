@@ -2528,10 +2528,14 @@ function LiveStudio({ words }: { words: string[] }) {
       isListeningRef.current = true
       setIsListening(true)
       setLastAlert("Live-Erkennung aktiv. Sprich frei ins Mikrofon!")
-    } catch (e) {
+    } catch (e: any) {
       console.error("[LiveStudio] startListening CATCH:", e)
-      const msg = e instanceof Error ? e.message : String(e)
-      setLastAlert(`Fehler beim Starten: ${msg}`)
+      if (e?.name === 'NotAllowedError' || e?.name === 'PermissionDeniedError' || String(e).includes('denied permission') || String(e).includes('not allowed')) {
+        setLastAlert("🎙️ Mikrofon-Zugriff blockiert: Bitte klicke oben in der Browser-Adressleiste auf das Schloss/Regler-Symbol, setze 'Mikrofon' auf 'Zulassen' und lade die Seite neu.")
+      } else {
+        const msg = e instanceof Error ? e.message : String(e)
+        setLastAlert(`Fehler beim Starten: ${msg}`)
+      }
     }
   }
 
