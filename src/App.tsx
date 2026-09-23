@@ -1324,6 +1324,12 @@ function LiveStudio({ words }: { words: string[] }) {
           }
         }
 
+        // 🔍 DEBUG LOGGING — sichtbar in Browser DevTools (F12 → Console)
+        console.log('[LiveStudio] resultIndex:', event.resultIndex, 'isFinal:', event.results[event.resultIndex]?.isFinal)
+        console.log('[LiveStudio] interimText:', JSON.stringify(interimText))
+        console.log('[LiveStudio] finalText (last 100):', finalText.slice(-100))
+        console.log('[LiveStudio] words being searched:', words)
+
         // Display: final + current interim
         const displayText = finalText + interimText
         setLiveTranscript(displayText)
@@ -1391,6 +1397,10 @@ function LiveStudio({ words }: { words: string[] }) {
           totalCounts[w] = Math.max(finalFillerCountsRef.current[w] || 0, interimCounts[w] || 0)
         }
         const totalFiller = Object.values(totalCounts).reduce((a, b) => a + b, 0)
+
+        console.log('[LiveStudio] interimCounts:', interimCounts)
+        console.log('[LiveStudio] finalFillerCountsRef:', { ...finalFillerCountsRef.current })
+        console.log('[LiveStudio] totalCounts:', totalCounts, '→ totalFiller:', totalFiller)
 
         setWordCounts(totalCounts)
         setLiveCount((prev) => {

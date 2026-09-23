@@ -99,10 +99,16 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
   const analysisController = new AbortController()
   request.on('aborted', () => analysisController.abort())
   try {
+    console.log('[analyze] Request received')
     temporaryDirectory = await mkdtemp(join(tmpdir(), 'aehmzaehler-'))
+    console.log('[analyze] Temp dir:', temporaryDirectory)
+
     const words = JSON.parse(request.body.words || '[]').map((word) => word.trim().toLowerCase()).filter(Boolean)
+    console.log('[analyze] Words to search:', words)
+
     let file = request.file
     if (!file && request.body.url) {
+      console.log('[analyze] Downloading from URL:', request.body.url)
       const output = join(temporaryDirectory, 'audio.%(ext)s')
       await youtubedl(request.body.url, {
         ...commonYtDlpOptions,
@@ -112,26 +118,40 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
       }, { timeout: 10 * 60 * 1000 })
       const downloadedFile = join(temporaryDirectory, 'audio.mp3')
       file = { buffer: await readFile(downloadedFile), originalname: 'linked-media.mp3', mimetype: 'audio/mpeg' }
+      console.log('[analyze] Download complete, size:', file.buffer.length)
     }
     if (!file) return response.status(400).json({ error: 'Bitte eine Datei oder einen Link angeben.' })
+    console.log('[analyze] File:', file.originalname, 'size:', file.buffer.length, 'mime:', file.mimetype)
+
     if (file.buffer.length > 24 * 1024 * 1024 || file.mimetype === 'video/mp4') {
+      console.log('[analyze] Compressing with ffmpeg...')
       const inputPath = join(temporaryDirectory, 'input-media')
       const compressedPath = join(temporaryDirectory, 'compressed.mp3')
       await writeFile(inputPath, file.buffer)
       await runCommand('ffmpeg', ['-y', '-i', inputPath, '-vn', '-ac', '1', '-ar', '16000', '-b:a', '48k', compressedPath], { timeout: 10 * 60 * 1000, signal: analysisController.signal })
       file = { buffer: await readFile(compressedPath), originalname: 'compressed-audio.mp3', mimetype: 'audio/mpeg' }
+      console.log('[analyze] Compressed size:', file.buffer.length)
     }
     if (file.buffer.length > 25 * 1024 * 1024) return response.status(413).json({ error: 'Die Audiodatei ist auch nach der Komprimierung größer als 25 MB. Bitte eine kürzere Aufnahme verwenden.' })
 
     const workingAudioPath = join(temporaryDirectory, 'prepared-audio.mp3')
     await writeFile(workingAudioPath, file.buffer)
 
+    console.log('[analyze] Running whisper via python:', localPythonPath)
+    console.log('[analyze] Script:', localTranscriptionScript)
+    console.log('[analyze] Python exists:', existsSync(localPythonPath))
+    console.log('[analyze] Script exists:', existsSync(localTranscriptionScript))
+
     const localResult = await runCommand(localPythonPath, [localTranscriptionScript, workingAudioPath, words.join(',')], {
       timeout: 20 * 60 * 1000,
       maxBuffer: 50 * 1024 * 1024,
       signal: analysisController.signal,
     })
+    console.log('[analyze] Python stdout (first 500 chars):', localResult.stdout?.slice(0, 500))
+    console.log('[analyze] Python stderr (first 500 chars):', localResult.stderr?.slice(0, 500))
+
     const transcription = JSON.parse(localResult.stdout)
+    console.log('[analyze] Parsed transcription, text length:', transcription.text?.length, 'duration:', transcription.duration)
 
     const text = transcription.text || ''
     const counts = Object.fromEntries(words.map((word) => [word, countWordOccurrences(text, word)]))
@@ -147,10 +167,13 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
         counts: countSegmentWords(String(segment.text || ''), words),
       }))
       : []
+    console.log('[analyze] Success – fillerWords:', fillerWords, 'totalWords:', totalWords)
     return response.json({ text, duration: Number(transcription.duration || 0), counts, fillerWords, baseFillerWords, totalWords, relativeRate: totalWords ? baseFillerWords / totalWords : 0, segments })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Analyse fehlgeschlagen.'
-    console.error('Analyse fehlgeschlagen:', message)
+    const stack = error instanceof Error ? error.stack : ''
+    console.error('[analyze] FEHLER:', message)
+    console.error('[analyze] STACK:', stack)
     return response.status(message.includes('format') ? 400 : 500).json({ error: message })
   } finally {
     if (typeof temporaryDirectory === 'string') await rm(temporaryDirectory, { recursive: true, force: true })
