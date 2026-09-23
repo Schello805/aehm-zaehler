@@ -115,24 +115,32 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
 
   response.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
-    'Cache-Control': 'no-cache, no-transform',
+    'Cache-Control': 'no-cache, no-transform, no-store',
     'Connection': 'keep-alive',
     'X-Accel-Buffering': 'no',
   })
+  if (typeof response.flushHeaders === 'function') response.flushHeaders()
+  if (request.socket) {
+    try {
+      request.socket.setNoDelay(true)
+      request.socket.setKeepAlive(true, 1000)
+    } catch {}
+  }
+
+  // 2KB padding to force any upstream proxy (Nginx/Cloudflare) to immediately flush the stream
+  response.write(': ' + ' '.repeat(2048) + '\n\n')
   response.write(': connected\n\n')
-  if (typeof response.flush === 'function') response.flush()
 
   heartbeat = setInterval(() => {
     if (!response.writableEnded && !isAborted) {
-      response.write(': ping\n\n')
-      if (typeof response.flush === 'function') response.flush()
+      response.write(': ping ' + Date.now() + '\n\n')
     }
-  }, 3000)
+  }, 2000)
 
   const sendEvent = (data) => {
     if (response.writableEnded || isAborted) return
-    response.write(`data: ${JSON.stringify(data)}\n\n`)
-    if (typeof response.flush === 'function') response.flush()
+    const json = JSON.stringify(data)
+    response.write(`data: ${json}\n\n: ${' '.repeat(512)}\n\n`)
   }
 
   request.on('close', () => {
