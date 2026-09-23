@@ -31,23 +31,31 @@ def main() -> None:
         initial_prompt='Transkribiere absolut wörtlich inklusive aller Füllwörter und Pausenlaute: Äh, also, ähm, wir haben, öh, gesprochen.',
     )
 
+    sys.stdout.write(json.dumps({'type': 'info', 'duration': info.duration, 'language': info.language}, ensure_ascii=False) + '\n')
+    sys.stdout.flush()
+
     segment_data = []
     text_parts = []
     for segment in segments:
         text_parts.append(segment.text)
-        segment_data.append({
+        s_obj = {
             'start': segment.start,
             'end': segment.end,
             'text': segment.text.strip(),
-        })
+        }
+        segment_data.append(s_obj)
+        sys.stdout.write(json.dumps({'type': 'segment', 'segment': s_obj}, ensure_ascii=False) + '\n')
+        sys.stdout.flush()
 
     text = ' '.join(s.strip() for s in text_parts if s.strip())
     data = {
+        'type': 'done',
         'text': text,
         'duration': info.duration,
         'segments': segment_data,
     }
-    print(json.dumps(data, ensure_ascii=False))
+    sys.stdout.write(json.dumps(data, ensure_ascii=False) + '\n')
+    sys.stdout.flush()
 
 
 if __name__ == '__main__':

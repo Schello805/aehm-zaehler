@@ -51,14 +51,6 @@ const formatRemainingTime = (remainingSeconds: number) => {
   return `${minutes}:${String(seconds).padStart(2, '0')} min`
 }
 
-const getProgressLabel = (percent: number) => {
-  if (percent < 25) return 'Vorbereitung'
-  if (percent < 50) return 'Medien prüfen'
-  if (percent < 70) return 'Audio verarbeiten'
-  if (percent < 95) return 'Transkription läuft'
-  return 'Ergebnis auswerten'
-}
-
 const formatTimestamp = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`
 
 
@@ -127,7 +119,6 @@ function App() {
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [result, setResult] = useState<Result | null>(null)
   const [error, setError] = useState('')
-  const [mediaDurationSeconds, setMediaDurationSeconds] = useState<number | null>(null)
   const [progress, setProgress] = useState<ProgressState>({ percent: 5, step: 0, label: 'Vorbereitung', remainingSeconds: defaultEstimatedAnalysisSeconds })
   const [history, setHistory] = useState<HistoryEntry[]>(() => {
     try {
@@ -256,14 +247,12 @@ function App() {
     const onLoadedMetadata = () => {
       const duration = Number.isFinite(media.duration) ? media.duration : null
       const estimate = getEstimatedAnalysisSeconds(duration ?? undefined)
-      setMediaDurationSeconds(duration)
       setProgress((current) => ({ ...current, remainingSeconds: estimate }))
     }
 
     media.preload = 'metadata'
     media.addEventListener('loadedmetadata', onLoadedMetadata)
     media.addEventListener('error', () => {
-      setMediaDurationSeconds(null)
       setProgress((current) => ({ ...current, remainingSeconds: defaultEstimatedAnalysisSeconds }))
     })
 
@@ -349,52 +338,7 @@ function App() {
     setError('')
     setResult(null)
     setActiveHistoryId(null)
-
-    let resolvedDuration = mediaDurationSeconds
-    if (!file && url) {
-      setProgress({ percent: 8, step: 0, label: 'Videolänge wird ermittelt', remainingSeconds: null })
-      try {
-        const metadataResponse = await fetch('/api/media-info', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url }),
-          signal: controller.signal,
-        })
-        const metadata = await metadataResponse.json()
-        if (!metadataResponse.ok) throw new Error(metadata.error || 'Die Medienlänge konnte nicht ermittelt werden.')
-        resolvedDuration = Number(metadata.duration)
-        setMediaDurationSeconds(resolvedDuration)
-      } catch (requestError) {
-        if (requestError instanceof DOMException && requestError.name === 'AbortError') {
-          setProgress({ percent: 0, step: 0, label: 'Analyse abgebrochen', remainingSeconds: null })
-          setIsAnalyzing(false)
-          analysisControllerRef.current = null
-          return
-        }
-        setError(requestError instanceof Error ? requestError.message : 'Die Medienlänge konnte nicht ermittelt werden.')
-        setIsAnalyzing(false)
-        analysisControllerRef.current = null
-        return
-      }
-    }
-
-    const startedAt = Date.now()
-    const analysisEstimate = getEstimatedAnalysisSeconds(resolvedDuration ?? undefined)
-    const progressTimer = window.setInterval(() => {
-      const elapsedSeconds = (Date.now() - startedAt) / 1000
-      const progressRatio = Math.min(elapsedSeconds / analysisEstimate, 1)
-      const percent = Math.min(94, Math.max(8, Math.round(progressRatio * 100)))
-      const remainingSeconds = Math.max(0, analysisEstimate - elapsedSeconds)
-      const label = getProgressLabel(percent)
-      const step = Math.min(progressSteps.length - 1, Math.max(0, Math.round(percent / 25)))
-
-      setProgress({
-        percent,
-        step,
-        label,
-        remainingSeconds,
-      })
-    }, 1000)
+    setProgress({ percent: 5, step: 0, label: url ? 'Lade Video von YouTube...' : 'Audiodatei wird vorbereitet...', remainingSeconds: null })
 
     const body = new FormData()
     body.append('words', JSON.stringify(words))
@@ -408,25 +352,109 @@ function App() {
         signal: controller.signal,
       })
 
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.error || 'Analyse fehlgeschlagen.')
-
-      const historyEntry: HistoryEntry = {
-        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        source: url || file?.name || 'Unbekannte Quelle',
-        sourceLabel: url || file?.name || 'Unbekannte Quelle',
-        createdAt: new Date().toISOString(),
-        result: data,
-        words: [...words],
-        title: analysisTitle.trim() || sourceLabel,
-        note: analysisNote.trim(),
-        tags: analysisTags.split(',').map((tag) => tag.trim()).filter(Boolean),
+      if (!response.ok) {
+        let errorMsg = `Server-Fehler (${response.status})`
+        try {
+          const text = await response.text()
+          try {
+            const json = JSON.parse(text)
+            if (json.error) errorMsg = json.error
+          } catch {
+            if (text && text.length < 200) errorMsg = text
+          }
+        } catch {}
+        throw new Error(errorMsg)
       }
 
-      setHistory((current) => [historyEntry, ...current].slice(0, 50))
-      setActiveHistoryId(historyEntry.id)
-      setResult(data)
-      setProgress({ percent: 100, step: progressSteps.length - 1, label: 'Ergebnis fertig', remainingSeconds: 0 })
+      if (!response.body) {
+        throw new Error('Keine Antwort vom Server erhalten.')
+      }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder('utf-8')
+      let buffer = ''
+      let streamFinished = false
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          const trimmed = line.trim()
+          if (!trimmed.startsWith('data:')) continue
+          const payload = trimmed.replace(/^data:\s*/, '')
+          if (!payload) continue
+
+          let event: any
+          try {
+            event = JSON.parse(payload)
+          } catch {
+            continue
+          }
+
+          if (event.type === 'status') {
+            setProgress((prev) => ({
+              ...prev,
+              label: event.message || prev.label,
+              step: event.stage === 'download' ? 0 : event.stage === 'converting' ? 1 : 2,
+            }))
+          } else if (event.type === 'progress') {
+            const remainingSeconds = event.duration && event.currentTime && event.currentTime > 0
+              ? Math.max(0, Math.round((event.duration - event.currentTime) * 1.0))
+              : null
+
+            setProgress({
+              percent: event.percent || 10,
+              step: 2,
+              label: `Whisper KI analysiert... (${Math.round(event.currentTime || 0)}s / ${Math.round(event.duration || 0)}s)`,
+              remainingSeconds,
+            })
+
+            // Live progressive result update
+            setResult({
+              text: event.partialText || '',
+              duration: event.duration || 0,
+              counts: event.counts || {},
+              fillerWords: event.fillerWords || 0,
+              baseFillerWords: event.baseFillerWords || 0,
+              totalWords: event.totalWords || 0,
+              relativeRate: event.relativeRate || 0,
+              segments: event.segments || [],
+            })
+          } else if (event.type === 'complete') {
+            streamFinished = true
+            const finalResult = event.result
+            setResult(finalResult)
+            setProgress({ percent: 100, step: progressSteps.length - 1, label: 'Ergebnis fertig', remainingSeconds: 0 })
+
+            const fallbackTitle = url || file?.name || 'Unbekannte Quelle'
+            const historyEntry: HistoryEntry = {
+              id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+              source: fallbackTitle,
+              sourceLabel: fallbackTitle,
+              createdAt: new Date().toISOString(),
+              result: finalResult,
+              words: [...words],
+              title: analysisTitle.trim() || fallbackTitle,
+              note: analysisNote.trim(),
+              tags: analysisTags.split(',').map((tag) => tag.trim()).filter(Boolean),
+            }
+
+            setHistory((current) => [historyEntry, ...current].slice(0, 50))
+            setActiveHistoryId(historyEntry.id)
+          } else if (event.type === 'error') {
+            throw new Error(event.error || 'Analyse fehlgeschlagen.')
+          }
+        }
+      }
+
+      if (!streamFinished && !controller.signal.aborted) {
+        setProgress((prev) => ({ ...prev, percent: 100, label: 'Analyse abgeschlossen' }))
+      }
     } catch (requestError) {
       if (requestError instanceof DOMException && requestError.name === 'AbortError') {
         setProgress({ percent: 0, step: 0, label: 'Analyse abgebrochen', remainingSeconds: null })
@@ -435,7 +463,6 @@ function App() {
       setError(requestError instanceof Error ? requestError.message : 'Analyse fehlgeschlagen.')
       setProgress({ percent: 0, step: 0, label: 'Fehler', remainingSeconds: 0 })
     } finally {
-      window.clearInterval(progressTimer)
       setIsAnalyzing(false)
       analysisControllerRef.current = null
     }
@@ -585,7 +612,7 @@ function App() {
             <div className={result ? 'panel result-panel revealed' : 'panel result-panel'}>
               <div className="panel-heading">
                 <div><span className="step">02</span><h2>Dein Ergebnis</h2></div>
-                <span className="live-dot">● {result ? 'Fertig' : 'Bereit'}</span>
+                <span className="live-dot">● {isAnalyzing ? 'Analysiert live …' : result ? 'Fertig' : 'Bereit'}</span>
               </div>
 
               {!result ? (
@@ -599,9 +626,9 @@ function App() {
                   <div className="result-source">
                     <div className="source-headline">
                       <span>Video / Quelle</span>
-                      <span className="source-tag">Analyse fertig</span>
+                      <span className="source-tag">{isAnalyzing ? '⚡ Live-Erkennung' : 'Analyse fertig'}</span>
                     </div>
-                    <strong>{activeSourceLabel}</strong>
+                    <strong>{activeSourceLabel || url || file?.name || 'YouTube Video'}</strong>
                   </div>
 
                   <div className="main-count">

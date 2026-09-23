@@ -3,7 +3,7 @@ import multer from 'multer'
 import { create as createYoutubeDl } from 'youtube-dl-exec'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { writeFile } from 'node:fs/promises'
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -96,8 +96,31 @@ app.post('/api/media-info', async (request, response) => {
 
 app.post('/api/analyze', upload.single('file'), async (request, response) => {
   let temporaryDirectory
-  const analysisController = new AbortController()
-  request.on('aborted', () => analysisController.abort())
+  let childProcess = null
+  let isAborted = false
+
+  response.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  })
+
+  const sendEvent = (data) => {
+    if (response.writableEnded || isAborted) return
+    response.write(`data: ${JSON.stringify(data)}\n\n`)
+    if (typeof response.flush === 'function') response.flush()
+  }
+
+  request.on('close', () => {
+    isAborted = true
+    if (childProcess) {
+      try {
+        childProcess.kill('SIGKILL')
+      } catch {}
+    }
+  })
+
   try {
     console.log('[analyze] Request received')
     temporaryDirectory = await mkdtemp(join(tmpdir(), 'aehmzaehler-'))
@@ -109,6 +132,8 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
     let file = request.file
     if (!file && request.body.url) {
       console.log('[analyze] Downloading from URL:', request.body.url)
+      sendEvent({ type: 'status', stage: 'download', message: 'Lade Video / Audio von YouTube herunter...' })
+
       const output = join(temporaryDirectory, 'audio.%(ext)s')
       await youtubedl(request.body.url, {
         ...commonYtDlpOptions,
@@ -120,61 +145,159 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
       file = { buffer: await readFile(downloadedFile), originalname: 'linked-media.mp3', mimetype: 'audio/mpeg' }
       console.log('[analyze] Download complete, size:', file.buffer.length)
     }
-    if (!file) return response.status(400).json({ error: 'Bitte eine Datei oder einen Link angeben.' })
+
+    if (!file) {
+      sendEvent({ type: 'error', error: 'Bitte eine Datei oder einen Link angeben.' })
+      return response.end()
+    }
     console.log('[analyze] File:', file.originalname, 'size:', file.buffer.length, 'mime:', file.mimetype)
 
     if (file.buffer.length > 24 * 1024 * 1024 || file.mimetype === 'video/mp4') {
       console.log('[analyze] Compressing with ffmpeg...')
+      sendEvent({ type: 'status', stage: 'converting', message: 'Optimiere Audio für Whisper KI...' })
       const inputPath = join(temporaryDirectory, 'input-media')
       const compressedPath = join(temporaryDirectory, 'compressed.mp3')
       await writeFile(inputPath, file.buffer)
-      await runCommand('ffmpeg', ['-y', '-i', inputPath, '-vn', '-ac', '1', '-ar', '16000', '-b:a', '48k', compressedPath], { timeout: 10 * 60 * 1000, signal: analysisController.signal })
+      await runCommand('ffmpeg', ['-y', '-i', inputPath, '-vn', '-ac', '1', '-ar', '16000', '-b:a', '48k', compressedPath], { timeout: 10 * 60 * 1000 })
       file = { buffer: await readFile(compressedPath), originalname: 'compressed-audio.mp3', mimetype: 'audio/mpeg' }
       console.log('[analyze] Compressed size:', file.buffer.length)
     }
-    if (file.buffer.length > 25 * 1024 * 1024) return response.status(413).json({ error: 'Die Audiodatei ist auch nach der Komprimierung größer als 25 MB. Bitte eine kürzere Aufnahme verwenden.' })
 
     const workingAudioPath = join(temporaryDirectory, 'prepared-audio.mp3')
     await writeFile(workingAudioPath, file.buffer)
 
-    console.log('[analyze] Running whisper via python:', localPythonPath)
-    console.log('[analyze] Script:', localTranscriptionScript)
-    console.log('[analyze] Python exists:', existsSync(localPythonPath))
-    console.log('[analyze] Script exists:', existsSync(localTranscriptionScript))
+    sendEvent({ type: 'status', stage: 'transcribing', message: 'Whisper KI transkribiert Audio...' })
 
-    const localResult = await runCommand(localPythonPath, [localTranscriptionScript, workingAudioPath, words.join(',')], {
-      timeout: 20 * 60 * 1000,
-      maxBuffer: 50 * 1024 * 1024,
-      signal: analysisController.signal,
+    await new Promise((resolve, reject) => {
+      let duration = 0
+      const segments = []
+      const textParts = []
+      let stdoutBuffer = ''
+      let stderrBuffer = ''
+
+      childProcess = spawn(localPythonPath, [localTranscriptionScript, workingAudioPath, words.join(',')])
+
+      childProcess.stdout.on('data', (chunk) => {
+        stdoutBuffer += chunk.toString()
+        const lines = stdoutBuffer.split('\n')
+        stdoutBuffer = lines.pop() || ''
+
+        for (const line of lines) {
+          const trimmed = line.trim()
+          if (!trimmed) continue
+          try {
+            const data = JSON.parse(trimmed)
+            if (data.type === 'info') {
+              duration = Number(data.duration || 0)
+              sendEvent({
+                type: 'progress',
+                percent: 2,
+                currentTime: 0,
+                duration,
+                counts: Object.fromEntries(words.map((w) => [w, 0])),
+                fillerWords: 0,
+                baseFillerWords: 0,
+                totalWords: 0,
+                relativeRate: 0,
+                partialText: '',
+                segments: [],
+              })
+            } else if (data.type === 'segment' && data.segment) {
+              const seg = {
+                start: Number(data.segment.start || 0),
+                end: Number(data.segment.end || 0),
+                text: String(data.segment.text || ''),
+                counts: countSegmentWords(String(data.segment.text || ''), words),
+              }
+              segments.push(seg)
+              textParts.push(seg.text)
+
+              const currentText = textParts.join(' ')
+              const counts = Object.fromEntries(words.map((word) => [word, countWordOccurrences(currentText, word)]))
+              const fillerWords = Object.values(counts).reduce((sum, count) => sum + count, 0)
+              const phraseOverlap = getPhraseOverlap(words, counts)
+              const baseFillerWords = Math.max(0, fillerWords - phraseOverlap)
+              const totalWords = currentText.trim() ? currentText.trim().split(/\s+/).length : 0
+              const relativeRate = totalWords ? baseFillerWords / totalWords : 0
+              const percent = duration > 0 ? Math.min(99, Math.max(5, Math.round((seg.end / duration) * 100))) : 50
+
+              sendEvent({
+                type: 'progress',
+                percent,
+                currentTime: seg.end,
+                duration,
+                counts,
+                fillerWords,
+                baseFillerWords,
+                totalWords,
+                relativeRate,
+                partialText: currentText,
+                segment: seg,
+                segments,
+              })
+            } else if (data.type === 'done') {
+              const text = String(data.text || textParts.join(' '))
+              const finalDuration = Number(data.duration || duration)
+              const counts = Object.fromEntries(words.map((word) => [word, countWordOccurrences(text, word)]))
+              const fillerWords = Object.values(counts).reduce((sum, count) => sum + count, 0)
+              const phraseOverlap = getPhraseOverlap(words, counts)
+              const baseFillerWords = Math.max(0, fillerWords - phraseOverlap)
+              const totalWords = text.trim() ? text.trim().split(/\s+/).length : 0
+              const relativeRate = totalWords ? baseFillerWords / totalWords : 0
+              const finalSegments = Array.isArray(data.segments) && data.segments.length > 0
+                ? data.segments.map((s) => ({
+                    start: Number(s.start || 0),
+                    end: Number(s.end || 0),
+                    text: String(s.text || ''),
+                    counts: countSegmentWords(String(s.text || ''), words),
+                  }))
+                : segments
+
+              sendEvent({
+                type: 'complete',
+                result: {
+                  text,
+                  duration: finalDuration,
+                  counts,
+                  fillerWords,
+                  baseFillerWords,
+                  totalWords,
+                  relativeRate,
+                  segments: finalSegments,
+                },
+              })
+            }
+          } catch (err) {
+            console.warn('[analyze] Failed to parse line from python:', line, err)
+          }
+        }
+      })
+
+      childProcess.stderr.on('data', (chunk) => {
+        stderrBuffer += chunk.toString()
+      })
+
+      childProcess.on('error', (err) => {
+        reject(err)
+      })
+
+      childProcess.on('close', (code) => {
+        if (code !== 0 && !isAborted) {
+          reject(new Error(`Whisper-Transkription fehlgeschlagen (Code ${code}): ${stderrBuffer.slice(-500)}`))
+        } else {
+          resolve()
+        }
+      })
     })
-    console.log('[analyze] Python stdout (first 500 chars):', localResult.stdout?.slice(0, 500))
-    console.log('[analyze] Python stderr (first 500 chars):', localResult.stderr?.slice(0, 500))
 
-    const transcription = JSON.parse(localResult.stdout)
-    console.log('[analyze] Parsed transcription, text length:', transcription.text?.length, 'duration:', transcription.duration)
-
-    const text = transcription.text || ''
-    const counts = Object.fromEntries(words.map((word) => [word, countWordOccurrences(text, word)]))
-    const fillerWords = Object.values(counts).reduce((sum, count) => sum + count, 0)
-    const phraseOverlap = getPhraseOverlap(words, counts)
-    const baseFillerWords = Math.max(0, fillerWords - phraseOverlap)
-    const totalWords = text.trim() ? text.trim().split(/\s+/).length : 0
-    const segments = Array.isArray(transcription.segments)
-      ? transcription.segments.map((segment) => ({
-        start: Number(segment.start || 0),
-        end: Number(segment.end || 0),
-        text: String(segment.text || ''),
-        counts: countSegmentWords(String(segment.text || ''), words),
-      }))
-      : []
-    console.log('[analyze] Success – fillerWords:', fillerWords, 'totalWords:', totalWords)
-    return response.json({ text, duration: Number(transcription.duration || 0), counts, fillerWords, baseFillerWords, totalWords, relativeRate: totalWords ? baseFillerWords / totalWords : 0, segments })
+    return response.end()
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Analyse fehlgeschlagen.'
     const stack = error instanceof Error ? error.stack : ''
     console.error('[analyze] FEHLER:', message)
     console.error('[analyze] STACK:', stack)
-    return response.status(message.includes('format') ? 400 : 500).json({ error: message })
+    sendEvent({ type: 'error', error: message })
+    return response.end()
   } finally {
     if (typeof temporaryDirectory === 'string') await rm(temporaryDirectory, { recursive: true, force: true })
   }
