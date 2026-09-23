@@ -23,6 +23,31 @@ const countWordOccurrences = (text: string, word: string) => {
   return matches
 }
 
+type SpeakerStats = {
+  id: string
+  name: string
+  gender?: 'm' | 'w' | 'unknown'
+  totalWords: number
+  fillerWords: number
+  baseFillerWords: number
+  relativeRate: number
+  duration: number
+  wpm: number
+  counts: Record<string, number>
+  color: string
+}
+
+type TranscriptSegment = {
+  start: number
+  end: number
+  text: string
+  counts: Record<string, number>
+  wpm?: number
+  speakerId?: string
+  speakerName?: string
+  speakerGender?: 'm' | 'w' | 'unknown'
+}
+
 type Result = {
   counts: Record<string, number>
   fillerWords: number
@@ -32,17 +57,10 @@ type Result = {
   duration: number
   text: string
   segments: TranscriptSegment[]
+  speakers?: Record<string, SpeakerStats>
   mediaTitle?: string
   pauseCount?: number
   totalPauseSeconds?: number
-}
-
-type TranscriptSegment = {
-  start: number
-  end: number
-  text: string
-  counts: Record<string, number>
-  wpm?: number
 }
 
 type ProgressState = {
@@ -167,6 +185,86 @@ function App() {
   const [isFetchingMediaInfo, setIsFetchingMediaInfo] = useState(false)
   const [queueInfo, setQueueInfo] = useState<{ position: number; total: number; message: string } | null>(null)
   const [showSelfHostModal, setShowSelfHostModal] = useState(false)
+  const [speakerFilter, setSpeakerFilter] = useState<string>('all')
+  const [editingSpeakerId, setEditingSpeakerId] = useState<string | null>(null)
+  const [editingSpeakerName, setEditingSpeakerName] = useState<string>('')
+
+  const renameSpeaker = (speakerId: string, newName: string) => {
+    if (!result || !newName.trim()) return
+    const trimmed = newName.trim()
+    const updatedSpeakers = { ...(result.speakers || {}) }
+    if (updatedSpeakers[speakerId]) {
+      updatedSpeakers[speakerId] = { ...updatedSpeakers[speakerId], name: trimmed }
+    }
+    const updatedSegments = (result.segments || []).map((seg) => {
+      if (seg.speakerId === speakerId) {
+        return { ...seg, speakerName: trimmed }
+      }
+      return seg
+    })
+    setResult({
+      ...result,
+      speakers: updatedSpeakers,
+      segments: updatedSegments
+    })
+    setEditingSpeakerId(null)
+  }
+
+  const reassignSegmentSpeaker = (segIndex: number, newSpeakerId: string) => {
+    if (!result) return
+    const updatedSegments = [...(result.segments || [])]
+    const targetSpeaker = result.speakers?.[newSpeakerId]
+    if (updatedSegments[segIndex]) {
+      updatedSegments[segIndex] = {
+        ...updatedSegments[segIndex],
+        speakerId: newSpeakerId,
+        speakerName: targetSpeaker?.name || newSpeakerId
+      }
+    }
+    const updatedSpeakers = { ...(result.speakers || {}) }
+    Object.keys(updatedSpeakers).forEach((k) => {
+      updatedSpeakers[k].totalWords = 0
+      updatedSpeakers[k].fillerWords = 0
+      updatedSpeakers[k].duration = 0
+      updatedSpeakers[k].counts = Object.fromEntries(words.map((w) => [w, 0]))
+    })
+    updatedSegments.forEach((s) => {
+      const spId = s.speakerId || 'speaker_1'
+      if (!updatedSpeakers[spId]) {
+        updatedSpeakers[spId] = {
+          id: spId,
+          name: s.speakerName || spId,
+          color: spId === 'speaker_1' ? '#3b82f6' : '#8b5cf6',
+          totalWords: 0,
+          fillerWords: 0,
+          baseFillerWords: 0,
+          relativeRate: 0,
+          duration: 0,
+          wpm: 0,
+          counts: Object.fromEntries(words.map((w) => [w, 0])),
+        }
+      }
+      const wordsInSeg = s.text.trim() ? s.text.trim().split(/\s+/).length : 0
+      updatedSpeakers[spId].totalWords += wordsInSeg
+      updatedSpeakers[spId].duration += Math.max(0, s.end - s.start)
+      if (s.counts) {
+        Object.entries(s.counts).forEach(([w, c]) => {
+          updatedSpeakers[spId].counts[w] = (updatedSpeakers[spId].counts[w] || 0) + Number(c)
+        })
+      }
+    })
+    Object.values(updatedSpeakers).forEach((sp) => {
+      sp.fillerWords = Object.values(sp.counts).reduce((a, b) => a + b, 0)
+      sp.baseFillerWords = sp.fillerWords
+      sp.relativeRate = sp.totalWords > 0 ? (sp.fillerWords / sp.totalWords) * 100 : 0
+      sp.wpm = sp.duration > 0 ? Math.round((sp.totalWords / (sp.duration / 60))) : 0
+    })
+    setResult({
+      ...result,
+      segments: updatedSegments,
+      speakers: updatedSpeakers
+    })
+  }
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const playbackRef = useRef<HTMLAudioElement>(null)
@@ -411,6 +509,14 @@ function App() {
     const effectiveFillers = result.baseFillerWords ?? result.fillerWords
     const ratePerMin = result.duration > 0 ? (effectiveFillers / (result.duration / 60)) : 0
 
+    let speakerSection = ''
+    if (result.speakers && Object.keys(result.speakers).length > 1) {
+      speakerSection = '\n\n👥 Auswertung nach Sprechern:\n' + Object.values(result.speakers).map((sp) => {
+        const spRatePerMin = sp.duration > 0 ? (sp.fillerWords / (sp.duration / 60)) : 0
+        return `• 👤 ${sp.name}: ${sp.fillerWords} Füllwörter (${sp.relativeRate.toFixed(1)} % Quote — ${sp.wpm} WPM, ca. ${spRatePerMin.toFixed(1)}/Min.)`
+      }).join('\n')
+    }
+
     const commentText = `Hallo, das Format ist super und ich schätze eure Inhalte und Themen sehr! Ich würde die Videos gerne voll aufsaugen, allerdings lenken mich häufige Füllwörter wie „äh“ und „ähm“ leider stark vom eigentlichen Inhalt ab.
 
 Ich möchte hier rein konstruktives Feedback dalassen, ohne jemanden verletzen oder angreifen zu wollen. Vor einiger Zeit habe ich bei einem Rhetorik-Seminar gelernt, aktiv auf Füllwörter zu achten – seitdem fallen sie mir beim Zuhören leider extrem auf.
@@ -419,7 +525,7 @@ Um das Ganze objektiv und greifbar zu machen, habe ich ein Analysetool („ähm-
 
 ⏱️ Dauer: ${formatTimestamp(result.duration)} Min.
 🗣️ Wörter gesamt: ${result.totalWords.toLocaleString('de-DE')}
-🚨 Füllwörter gesamt: ${result.fillerWords} (${((result.relativeRate || 0) * 100).toLocaleString('de-DE', { maximumFractionDigits: 1 })} % — ca. ${ratePerMin.toLocaleString('de-DE', { maximumFractionDigits: 1 })} Füllwörter/Min.)
+🚨 Füllwörter gesamt: ${result.fillerWords} (${((result.relativeRate || 0) * 100).toLocaleString('de-DE', { maximumFractionDigits: 1 })} % — ca. ${ratePerMin.toLocaleString('de-DE', { maximumFractionDigits: 1 })} Füllwörter/Min.)${speakerSection}
 
 🔍 Häufigste Füllwörter:
 ${topWords || '• Keine Füllwörter gefunden'}
@@ -444,10 +550,17 @@ Vielleicht hilft euch das Feedback dabei, den Sprechfluss noch weiter zu verfein
       .map(([w, c]) => `• „${w}“: ${c}×`)
       .join('\n')
 
+    let speakerSection = ''
+    if (result.speakers && Object.keys(result.speakers).length > 1) {
+      speakerSection = '\n\n👥 Auswertung nach Sprechern:\n' + Object.values(result.speakers).map((sp) => {
+        return `• 👤 ${sp.name}: ${sp.fillerWords} Füllwörter (${sp.relativeRate.toFixed(1)} % Quote — ${sp.wpm} WPM)`
+      }).join('\n')
+    }
+
     const summaryText = `📊 Sprechfluss-Analyse: ${activeSourceLabel || 'Audio/Video'}
 ⏱️ Dauer: ${formatTimestamp(result.duration)} Min.
 🗣️ Wörter gesamt: ${result.totalWords.toLocaleString('de-DE')}
-🚨 Füllwörter gesamt: ${result.fillerWords} (${((result.relativeRate || 0) * 100).toLocaleString('de-DE', { maximumFractionDigits: 1 })} % — ${advice.rate.toLocaleString('de-DE', { maximumFractionDigits: 1 })} Füllwörter/Min.)
+🚨 Füllwörter gesamt: ${result.fillerWords} (${((result.relativeRate || 0) * 100).toLocaleString('de-DE', { maximumFractionDigits: 1 })} % — ${advice.rate.toLocaleString('de-DE', { maximumFractionDigits: 1 })} Füllwörter/Min.)${speakerSection}
 
 🔍 Häufigste Füllwörter:
 ${topWords || '• Keine Füllwörter gefunden'}
@@ -1753,6 +1866,130 @@ ${advice.summary}
                     )
                   })()}
 
+                  {/* 👥 Sprecher-Analyse & Vergleich */}
+                  {result.speakers && Object.keys(result.speakers).length > 1 && (() => {
+                    const spList = Object.values(result.speakers)
+                    const totalFillers = Math.max(1, result.fillerWords)
+
+                    return (
+                      <div className="speakers-analysis-card">
+                        <div className="speakers-header">
+                          <div>
+                            <div className="section-label">👥 Sprecher-Analyse & Vergleich</div>
+                            <p className="speakers-subtext">Automatische Stimm- & Namenserkennung. Klicke auf ✎ zum Umbenennen.</p>
+                          </div>
+                          <span className="speakers-count-badge">{spList.length} Sprecher erkannt</span>
+                        </div>
+
+                        {/* Speaker Cards Grid */}
+                        <div className="speakers-grid">
+                          {spList.map((sp) => {
+                            const isEditing = editingSpeakerId === sp.id
+                            const topWords = Object.entries(sp.counts || {})
+                              .filter(([, c]) => c > 0)
+                              .sort(([, a], [, b]) => b - a)
+                              .slice(0, 3)
+
+                            return (
+                              <div key={sp.id} className="speaker-card" style={{ borderTopColor: sp.color }}>
+                                <div className="speaker-card-header">
+                                  <div className="speaker-avatar" style={{ background: sp.color }}>
+                                    {sp.name.charAt(0).toUpperCase()}
+                                  </div>
+                                  <div className="speaker-name-area">
+                                    {isEditing ? (
+                                      <div className="speaker-inline-edit">
+                                        <input
+                                          value={editingSpeakerName}
+                                          onChange={(e) => setEditingSpeakerName(e.target.value)}
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') renameSpeaker(sp.id, editingSpeakerName)
+                                            if (e.key === 'Escape') setEditingSpeakerId(null)
+                                          }}
+                                          autoFocus
+                                        />
+                                        <button type="button" onClick={() => renameSpeaker(sp.id, editingSpeakerName)}>✓</button>
+                                        <button type="button" onClick={() => setEditingSpeakerId(null)}>×</button>
+                                      </div>
+                                    ) : (
+                                      <div className="speaker-name-display">
+                                        <b>{sp.name}</b>
+                                        <button
+                                          type="button"
+                                          className="speaker-edit-btn"
+                                          onClick={() => {
+                                            setEditingSpeakerId(sp.id)
+                                            setEditingSpeakerName(sp.name)
+                                          }}
+                                          title="Namen bearbeiten"
+                                        >
+                                          ✎
+                                        </button>
+                                      </div>
+                                    )}
+                                    <span className="speaker-meta-time">
+                                      {Math.floor(sp.duration / 60)}:{String(Math.round(sp.duration % 60)).padStart(2, '0')} min ({sp.totalWords} Wörter)
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <div className="speaker-metrics-row">
+                                  <div className="speaker-metric">
+                                    <span className="sm-label">Füllwörter</span>
+                                    <strong className="sm-val">{sp.fillerWords}</strong>
+                                  </div>
+                                  <div className="speaker-metric">
+                                    <span className="sm-label">Quote</span>
+                                    <strong className="sm-val">{sp.relativeRate.toFixed(1)} %</strong>
+                                  </div>
+                                  <div className="speaker-metric">
+                                    <span className="sm-label">Tempo</span>
+                                    <strong className="sm-val">{sp.wpm} <small>WPM</small></strong>
+                                  </div>
+                                </div>
+
+                                {topWords.length > 0 && (
+                                  <div className="speaker-top-words">
+                                    <span className="stw-label">Top:</span>
+                                    {topWords.map(([w, c]) => (
+                                      <span key={w} className="speaker-word-chip">„{w}“ <b>{c}×</b></span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+
+                        {/* Head-to-Head Comparison Bar */}
+                        {spList.length === 2 && (
+                          <div className="speakers-compare-section">
+                            <div className="compare-bar-label">
+                              <span>🔴 Füllwort-Verteilung: <b>{spList[0].name} ({Math.round((spList[0].fillerWords / totalFillers) * 100)}%)</b></span>
+                              <span><b>{spList[1].name} ({Math.round((spList[1].fillerWords / totalFillers) * 100)}%)</b></span>
+                            </div>
+                            <div className="speakers-compare-track">
+                              <div
+                                className="compare-segment"
+                                style={{
+                                  width: `${Math.max(5, Math.min(95, (spList[0].fillerWords / totalFillers) * 100))}%`,
+                                  background: spList[0].color,
+                                }}
+                              />
+                              <div
+                                className="compare-segment"
+                                style={{
+                                  width: `${Math.max(5, Math.min(95, (spList[1].fillerWords / totalFillers) * 100))}%`,
+                                  background: spList[1].color,
+                                }}
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()}
+
                   <div className="waveform-bar-card">
                     <div className="timeline-header-flex">
                       <div className="section-label">Interaktive Füllwort-Timeline & Player</div>
@@ -1866,20 +2103,85 @@ ${advice.summary}
                   </div>
 
                   <div className="transcript-card">
-                    <div className="section-label">Transkript mit Zeitstempeln (Klicken zum Anhören)</div>
+                    <div className="transcript-header-bar">
+                      <div className="section-label">Transkript mit Zeitstempeln & Sprechern (Klicken zum Anhören)</div>
+                      {result.speakers && Object.keys(result.speakers).length > 1 && (
+                        <div className="speaker-filter-pills">
+                          <button
+                            type="button"
+                            className={speakerFilter === 'all' ? 'speaker-pill active' : 'speaker-pill'}
+                            onClick={() => setSpeakerFilter('all')}
+                          >
+                            Alle Sprecher ({result.segments?.length || 0})
+                          </button>
+                          {Object.values(result.speakers).map((sp) => (
+                            <button
+                              key={sp.id}
+                              type="button"
+                              className={speakerFilter === sp.id ? 'speaker-pill active' : 'speaker-pill'}
+                              style={{
+                                borderColor: sp.color,
+                                color: speakerFilter === sp.id ? 'white' : sp.color,
+                                background: speakerFilter === sp.id ? sp.color : undefined
+                              }}
+                              onClick={() => setSpeakerFilter(sp.id)}
+                            >
+                              👤 {sp.name} ({sp.fillerWords} Ähs)
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
                     {file && <audio className="playback" ref={playbackRef} src={playbackUrl} controls />}
+
                     <div className="transcript-list">
-                      {(result.segments || []).map((segment) => (
-                        <button
-                          className="transcript-segment"
-                          type="button"
-                          key={`${segment.start}-${segment.end}`}
-                          onClick={() => seekAndPlay(segment.start)}
-                        >
-                          <span>{formatTimestamp(segment.start)}</span>
-                          <strong>{segment.text}</strong>
-                        </button>
-                      ))}
+                      {(result.segments || [])
+                        .filter((seg) => speakerFilter === 'all' || seg.speakerId === speakerFilter)
+                        .map((segment, segIdx) => {
+                          const sp = result.speakers?.[segment.speakerId || 'speaker_1']
+                          const spColor = sp?.color || '#3b82f6'
+                          const spName = segment.speakerName || sp?.name || 'Sprecher 1'
+
+                          return (
+                            <div className="transcript-segment-row" key={`${segment.start}-${segment.end}-${segIdx}`}>
+                              <button
+                                className="transcript-segment-btn"
+                                type="button"
+                                onClick={() => seekAndPlay(segment.start)}
+                              >
+                                <span className="transcript-time">{formatTimestamp(segment.start)}</span>
+                                {result.speakers && Object.keys(result.speakers).length > 1 && (
+                                  <span
+                                    className="transcript-speaker-tag"
+                                    style={{
+                                      background: `${spColor}18`,
+                                      color: spColor,
+                                      borderColor: `${spColor}44`
+                                    }}
+                                    title={`Sprecher: ${spName}`}
+                                  >
+                                    👤 {spName}
+                                  </span>
+                                )}
+                                <strong className="transcript-text-content">{segment.text}</strong>
+                              </button>
+
+                              {result.speakers && Object.keys(result.speakers).length > 1 && (
+                                <select
+                                  className="segment-speaker-select"
+                                  value={segment.speakerId || 'speaker_1'}
+                                  onChange={(e) => reassignSegmentSpeaker(segIdx, e.target.value)}
+                                  title="Sprecher für diesen Abschnitt ändern"
+                                >
+                                  {Object.values(result.speakers).map((s) => (
+                                    <option key={s.id} value={s.id}>{s.name}</option>
+                                  ))}
+                                </select>
+                              )}
+                            </div>
+                          )
+                        })}
                     </div>
                   </div>
 

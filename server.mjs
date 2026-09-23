@@ -272,6 +272,144 @@ const getPhraseOverlap = (words, counts) => {
   return overlap
 }
 
+const SPEAKER_COLORS = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ec4899', '#06b6d4']
+
+const extractSpeakerNamesFromTranscript = (segments) => {
+  const earlySegments = (segments || []).filter((s) => Number(s.start || 0) <= 180)
+  const fullEarlyText = earlySegments.map((s) => String(s.text || '')).join(' ')
+  const detected = []
+
+  const patterns = [
+    /(?:mein name ist|ich bin|hier ist|ich heiße)\s+([A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+)?)/gi,
+    /(?:mein gast (?:heute|ist)?|begrüße (?:ganz herzlich)?|zusammen mit|mit dabei ist)\s+([A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+)?)/gi,
+    /(?:herzlich willkommen (?:bei|zu|an)|hallo zusammen,? ich bin)\s+([A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+)?)/gi,
+    /(?:und an meiner seite|heute zugeschaltet ist)\s+([A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+)?)/gi,
+  ]
+
+  const stopWords = ['ein', 'eine', 'einer', 'sehr', 'wieder', 'heute', 'jetzt', 'hier', 'auch', 'noch', 'podcast', 'video', 'kanal', 'show', 'deutschland', 'folge', 'thema']
+
+  for (const pattern of patterns) {
+    let match
+    while ((match = pattern.exec(fullEarlyText)) !== null) {
+      const candidate = match[1]?.trim()
+      if (candidate && candidate.length > 2 && !stopWords.includes(candidate.toLowerCase()) && !detected.includes(candidate)) {
+        detected.push(candidate)
+      }
+    }
+  }
+
+  return detected
+}
+
+const performSpeakerDiarization = (rawSegments, words) => {
+  if (!rawSegments || !rawSegments.length) return { segments: [], speakers: {} }
+
+  const detectedNames = extractSpeakerNamesFromTranscript(rawSegments)
+  const name1 = detectedNames[0] || 'Sprecher 1'
+  const name2 = detectedNames[1] || (detectedNames.length === 1 ? 'Gast / Gesprächspartner' : 'Sprecher 2')
+
+  let currentSpeakerIdx = 0
+  let isMultiSpeaker = false
+
+  const turnMarkers = [
+    /^(?:ja|nein|genau|stimmt|absolut|danke|hallo|guten tag|servus|moin|auf jeden fall|interessant|frage an|was meinst du|wie siehst du)/i,
+    /(?:\?|\!)$/
+  ]
+
+  const enrichedSegments = []
+  let speakerTurnCount = 0
+
+  rawSegments.forEach((s, idx) => {
+    const segStart = Number(s.start || 0)
+    const segEnd = Number(s.end || 0)
+    const segText = String(s.text || '').trim()
+    const segWordCount = segText ? segText.split(/\s+/).length : 0
+    const segDurationMin = Math.max(0.01, (segEnd - segStart) / 60)
+    const wpm = Math.round(segWordCount / segDurationMin)
+
+    if (idx > 0) {
+      const prevEnd = Number(rawSegments[idx - 1].end || 0)
+      const prevText = String(rawSegments[idx - 1].text || '').trim()
+      const gap = segStart - prevEnd
+
+      const prevHasQuestion = prevText.endsWith('?')
+      const currentHasTurnCue = turnMarkers[0].test(segText)
+      
+      if (gap >= 1.6 || (gap >= 0.8 && (prevHasQuestion || currentHasTurnCue))) {
+        currentSpeakerIdx = currentSpeakerIdx === 0 ? 1 : 0
+        speakerTurnCount++
+        isMultiSpeaker = true
+      }
+    }
+
+    const speakerId = isMultiSpeaker || detectedNames.length > 1 ? `speaker_${currentSpeakerIdx + 1}` : 'speaker_1'
+    const speakerName = speakerId === 'speaker_1' ? name1 : name2
+
+    enrichedSegments.push({
+      start: segStart,
+      end: segEnd,
+      text: segText,
+      counts: countSegmentWords(segText, words),
+      wpm: isNaN(wpm) ? 0 : Math.min(300, Math.max(0, wpm)),
+      speakerId,
+      speakerName,
+    })
+  })
+
+  // If very few turns occurred and no second name detected, treat as single speaker
+  if (speakerTurnCount < 2 && detectedNames.length <= 1) {
+    enrichedSegments.forEach((s) => {
+      s.speakerId = 'speaker_1'
+      s.speakerName = name1
+    })
+  }
+
+  // Aggregate speaker stats
+  const speakers = {}
+  enrichedSegments.forEach((s) => {
+    const spId = s.speakerId || 'speaker_1'
+    if (!speakers[spId]) {
+      const idx = spId === 'speaker_1' ? 0 : 1
+      speakers[spId] = {
+        id: spId,
+        name: s.speakerName || `Sprecher ${idx + 1}`,
+        color: SPEAKER_COLORS[idx % SPEAKER_COLORS.length],
+        totalWords: 0,
+        fillerWords: 0,
+        baseFillerWords: 0,
+        relativeRate: 0,
+        duration: 0,
+        wpm: 0,
+        counts: Object.fromEntries(words.map((w) => [w, 0])),
+      }
+    }
+
+    const wordsInSeg = s.text.trim() ? s.text.trim().split(/\s+/).length : 0
+    const segDur = Math.max(0, s.end - s.start)
+    speakers[spId].totalWords += wordsInSeg
+    speakers[spId].duration += segDur
+
+    if (s.counts) {
+      Object.entries(s.counts).forEach(([w, count]) => {
+        if (speakers[spId].counts[w] !== undefined) {
+          speakers[spId].counts[w] += Number(count)
+        }
+      })
+    }
+  })
+
+  // Calculate rates & WPM for each speaker
+  Object.values(speakers).forEach((sp) => {
+    sp.fillerWords = Object.values(sp.counts).reduce((a, b) => a + b, 0)
+    sp.baseFillerWords = sp.fillerWords
+    sp.relativeRate = sp.totalWords > 0 ? (sp.fillerWords / sp.totalWords) * 100 : 0
+    sp.wpm = sp.duration > 0 ? Math.round((sp.totalWords / (sp.duration / 60))) : 0
+    sp.duration = Math.round(sp.duration * 10) / 10
+  })
+
+  return { segments: enrichedSegments, speakers }
+}
+
 app.post('/api/media-info', async (request, response) => {
   try {
     const url = String(request.body.url || '').trim()
@@ -703,36 +841,22 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
                 const relativeRate = totalWords ? baseFillerWords / totalWords : 0
                 const rawSegments = Array.isArray(data.segments) && data.segments.length > 0 ? data.segments : segments
 
-                // Compute pauses (> 1.2s gap between segments) and enriched WPM
+                // Perform speaker diarization, name extraction, pauses and WPM
+                const { segments: finalSegments, speakers } = performSpeakerDiarization(rawSegments, words)
+
                 let pauseCount = 0
                 let totalPauseSeconds = 0
-                const finalSegments = rawSegments.map((s, idx) => {
-                  const segStart = Number(s.start || 0)
-                  const segEnd = Number(s.end || 0)
-                  const segText = String(s.text || '')
-                  const segWordCount = segText.trim() ? segText.trim().split(/\s+/).length : 0
-                  const segDurationMin = Math.max(0.01, (segEnd - segStart) / 60)
-                  const wpm = Math.round(segWordCount / segDurationMin)
-
-                  if (idx > 0) {
-                    const prevEnd = Number(rawSegments[idx - 1].end || 0)
-                    const gap = segStart - prevEnd
-                    if (gap >= 1.2) {
-                      pauseCount += 1
-                      totalPauseSeconds += gap
-                    }
+                for (let idx = 1; idx < finalSegments.length; idx++) {
+                  const prevEnd = Number(finalSegments[idx - 1].end || 0)
+                  const segStart = Number(finalSegments[idx].start || 0)
+                  const gap = segStart - prevEnd
+                  if (gap >= 1.2) {
+                    pauseCount += 1
+                    totalPauseSeconds += gap
                   }
+                }
 
-                  return {
-                    start: segStart,
-                    end: segEnd,
-                    text: segText,
-                    counts: countSegmentWords(segText, words),
-                    wpm: isNaN(wpm) ? 0 : Math.min(300, Math.max(0, wpm)),
-                  }
-                })
-
-                console.log('[analyze] Complete! Total words:', totalWords, 'Fillers:', fillerWords, 'Segments:', finalSegments.length, 'Pauses:', pauseCount)
+                console.log('[analyze] Complete! Total words:', totalWords, 'Fillers:', fillerWords, 'Segments:', finalSegments.length, 'Speakers:', Object.keys(speakers).length, 'Pauses:', pauseCount)
                 const completeResult = {
                   text,
                   duration: finalDuration,
@@ -742,6 +866,7 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
                   totalWords,
                   relativeRate,
                   segments: finalSegments,
+                  speakers,
                   pauseCount,
                   totalPauseSeconds: Math.round(totalPauseSeconds * 10) / 10,
                   mediaTitle: mediaTitle || (file ? file.originalname : ''),

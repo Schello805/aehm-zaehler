@@ -3795,3 +3795,342 @@ body { transition: background 0.35s ease, color 0.35s ease; }
   }
 }
 
+/* ==========================================================================
+   👥 Speaker Diarization & Comparison Dashboard Styles
+   ========================================================================== */
+
+.speakers-analysis-card {
+  margin-top: 12px;
+  padding: 14px 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.speakers-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.speakers-subtext {
+  margin: 2px 0 0 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.speakers-count-badge {
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(59, 130, 246, 0.1);
+  color: #3b82f6;
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  padding: 2px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.speakers-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+}
+
+.speaker-card {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-top-width: 3px;
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.speaker-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.speaker-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  color: white;
+  font-family: 'Outfit', sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.speaker-name-area {
+  flex: 1;
+  min-width: 0;
+}
+
+.speaker-name-display {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.speaker-name-display b {
+  font-size: 14px;
+  color: var(--ink);
+  font-family: 'Outfit', sans-serif;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.speaker-edit-btn {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 1px 4px;
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.speaker-edit-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--ink);
+}
+
+.speaker-inline-edit {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.speaker-inline-edit input {
+  font-size: 12px;
+  padding: 2px 6px;
+  border: 1px solid var(--red);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--ink);
+  width: 120px;
+}
+
+.speaker-inline-edit button {
+  padding: 2px 6px;
+  font-size: 11px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.speaker-meta-time {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.speaker-metrics-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  background: var(--panel);
+  border-radius: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+}
+
+.speaker-metric {
+  display: flex;
+  flex-direction: column;
+}
+
+.sm-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  color: var(--muted);
+  letter-spacing: 0.4px;
+}
+
+.sm-val {
+  font-family: 'Outfit', sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.sm-val small {
+  font-size: 9px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.speaker-top-words {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 11px;
+}
+
+.stw-label {
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.speaker-word-chip {
+  background: rgba(243, 125, 33, 0.1);
+  color: var(--ink);
+  border: 1px solid rgba(243, 125, 33, 0.25);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+}
+
+.speaker-word-chip b {
+  color: #f37d21;
+}
+
+/* Head-to-Head Comparison */
+.speakers-compare-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 4px;
+}
+
+.compare-bar-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--ink);
+}
+
+.speakers-compare-track {
+  height: 12px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: #e2e8f0;
+  display: flex;
+  border: 1px solid var(--line);
+}
+
+.compare-segment {
+  height: 100%;
+  transition: width 0.3s ease;
+}
+
+/* Transcript Header & Filter Pills */
+.transcript-header-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.speaker-filter-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.speaker-pill {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.speaker-pill:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--ink);
+}
+
+.speaker-pill.active {
+  background: var(--ink);
+  color: white;
+  border-color: var(--ink);
+}
+
+/* Transcript Row with Speaker Tag */
+.transcript-segment-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.transcript-segment-btn {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.transcript-segment-btn:hover {
+  background: var(--bg);
+  border-color: var(--line);
+}
+
+.transcript-time {
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  flex-shrink: 0;
+  padding-top: 1px;
+}
+
+.transcript-speaker-tag {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.transcript-text-content {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.segment-speaker-select {
+  font-size: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--muted);
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0.4;
+  transition: opacity 0.15s ease;
+}
+
+.transcript-segment-row:hover .segment-speaker-select {
+  opacity: 1;
+}
+
+
