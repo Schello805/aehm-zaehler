@@ -43,7 +43,7 @@ main {
 .brand {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -51,20 +51,28 @@ main {
   font-weight: 700;
   letter-spacing: 0.2px;
   cursor: pointer;
+  transition: transform 0.15s ease, opacity 0.15s ease;
+}
+
+.brand:hover {
+  transform: translateY(-1px);
+  opacity: 0.9;
 }
 
 .brand-logo-img {
-  width: 30px;
-  height: 30px;
+  width: 38px;
+  height: 38px;
   object-fit: contain;
-  border-radius: 6px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
 .brand-title {
   font-family: 'Outfit', sans-serif;
-  font-size: 18px;
-  font-weight: 700;
+  font-size: 21px;
+  font-weight: 800;
   letter-spacing: -0.5px;
+  color: var(--ink);
 }
 
 .nav-actions {
@@ -1963,10 +1971,11 @@ h2 {
 }
 
 .live-logo-badge {
-  width: 48px;
-  height: 48px;
+  width: 56px;
+  height: 56px;
   object-fit: contain;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.3));
 }
 
 .flip-counter-display {
