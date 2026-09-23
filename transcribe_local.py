@@ -100,14 +100,33 @@ def main() -> None:
             if end_samp > start_samp:
                 pitch = estimate_segment_pitch(audio_samples[start_samp:end_samp], sr=16000)
 
-        cleaned_text = re.sub(r'\b(\w+)(?:\s+\1){2,}\b', r'\1 \1', segment.text, flags=re.IGNORECASE).strip()
+        words_data = []
+        if getattr(segment, 'words', None):
+            for w in segment.words:
+                w_str = w.word.strip()
+                w_clean = re.sub(r'^[^\w]+|[^\w]+$', '', w_str).lower()
+                prob = float(getattr(w, 'probability', 1.0))
+                # Filter low confidence hallucinations on ambiguous sound tokens (breath, mic bump, clicks)
+                if w_clean in {'äh', 'ähm', 'ehm', 'öh', 'hm'} and prob < 0.25:
+                    continue
+                words_data.append({
+                    'start': round(float(w.start), 3),
+                    'end': round(float(w.end), 3),
+                    'word': w_str,
+                    'clean': w_clean,
+                    'prob': round(prob, 2),
+                })
+            if words_data:
+                cleaned_text = ' '.join(w['word'] for w in words_data).strip()
+
         text_parts.append(cleaned_text)
 
         s_obj = {
-            'start': segment.start,
-            'end': segment.end,
+            'start': round(float(segment.start), 3),
+            'end': round(float(segment.end), 3),
             'text': cleaned_text,
             'pitch': round(pitch, 1),
+            'words': words_data,
         }
         segment_data.append(s_obj)
         sys.stdout.write(json.dumps({'type': 'segment', 'segment': s_obj}, ensure_ascii=False) + '\n')

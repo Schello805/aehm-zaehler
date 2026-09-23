@@ -38,11 +38,31 @@ export type SpeakerStats = {
   color: string
 }
 
+export type WordTiming = {
+  start: number
+  end: number
+  word: string
+  clean?: string
+  prob?: number
+}
+
+export type FillerOccurrence = {
+  id: string
+  segIndex: number
+  start: number
+  end: number
+  word: string
+  speakerId?: string
+  speakerName?: string
+  text?: string
+}
+
 export type TranscriptSegment = {
   start: number
   end: number
   text: string
   counts: Record<string, number>
+  words?: WordTiming[]
   pitch?: number
   wpm?: number
   speakerId?: string
@@ -616,12 +636,77 @@ function App() {
     }
   }, [activeYoutubeId])
 
-  const fillerSegments = useMemo(() => {
+  const fillerOccurrences = useMemo<FillerOccurrence[]>(() => {
     if (!result?.segments) return []
-    return result.segments.filter((seg) => {
-      if (!seg.counts) return false
-      return Object.entries(seg.counts).some(([w, count]) => words.includes(w) && count > 0)
+    const occurrences: FillerOccurrence[] = []
+
+    result.segments.forEach((seg, segIndex) => {
+      if (Array.isArray(seg.words) && seg.words.length > 0) {
+        seg.words.forEach((w, wIndex) => {
+          const wClean = String(w.clean || w.word || '').trim().toLowerCase()
+          const matched = words.some((target) => {
+            const targetClean = target.trim().toLowerCase()
+            return wClean === targetClean || wClean.includes(targetClean)
+          })
+          if (matched) {
+            occurrences.push({
+              id: `occ-${segIndex}-${wIndex}-${w.start}`,
+              segIndex,
+              start: Math.max(0, Number(w.start || 0)),
+              end: Math.max(Number(w.start || 0) + 0.35, Number(w.end || 0)),
+              word: w.word || 'äh',
+              speakerId: seg.speakerId,
+              speakerName: seg.speakerName,
+              text: seg.text,
+            })
+          }
+        })
+      } else if (seg.counts) {
+        const hasFillers = Object.entries(seg.counts).some(([w, count]) => words.includes(w) && count > 0)
+        if (hasFillers) {
+          const segText = seg.text || ''
+          const segDuration = Math.max(0.5, seg.end - seg.start)
+          let matchFound = false
+
+          words.forEach((targetWord) => {
+            const regex = new RegExp(`\\b${targetWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi')
+            let match: RegExpExecArray | null
+            while ((match = regex.exec(segText)) !== null) {
+              matchFound = true
+              const fracStart = segText.length > 0 ? match.index / segText.length : 0
+              const fracEnd = segText.length > 0 ? (match.index + match[0].length) / segText.length : 0.2
+              const occStart = Math.max(0, seg.start + fracStart * segDuration)
+              const occEnd = Math.max(occStart + 0.4, seg.start + fracEnd * segDuration)
+              occurrences.push({
+                id: `occ-frac-${segIndex}-${match.index}`,
+                segIndex,
+                start: occStart,
+                end: occEnd,
+                word: match[0],
+                speakerId: seg.speakerId,
+                speakerName: seg.speakerName,
+                text: seg.text,
+              })
+            }
+          })
+
+          if (!matchFound) {
+            occurrences.push({
+              id: `occ-fallback-${segIndex}`,
+              segIndex,
+              start: seg.start,
+              end: seg.end,
+              word: 'äh',
+              speakerId: seg.speakerId,
+              speakerName: seg.speakerName,
+              text: seg.text,
+            })
+          }
+        }
+      }
     })
+
+    return occurrences.sort((a, b) => a.start - b.start)
   }, [result, words])
 
   const pauseSegments = useMemo(() => {
@@ -651,12 +736,12 @@ function App() {
   }, [result])
 
   const currentFillerIndex = useMemo(() => {
-    if (!fillerSegments.length) return -1
-    const idx = fillerSegments.findIndex((seg) => activePlayTime >= seg.start - 0.25 && activePlayTime <= seg.end + 0.3)
+    if (!fillerOccurrences.length) return -1
+    const idx = fillerOccurrences.findIndex((occ) => activePlayTime >= occ.start - 0.25 && activePlayTime <= occ.end + 0.3)
     if (idx !== -1) return idx
-    const prevs = fillerSegments.filter((seg) => seg.start <= activePlayTime)
+    const prevs = fillerOccurrences.filter((occ) => occ.start <= activePlayTime)
     return prevs.length ? prevs.length - 1 : 0
-  }, [fillerSegments, activePlayTime])
+  }, [fillerOccurrences, activePlayTime])
 
   const currentPauseIndex = useMemo(() => {
     if (!pauseSegments.length) return -1
@@ -696,7 +781,7 @@ function App() {
   }
 
   const jumpToFiller = (direction: 'next' | 'prev') => {
-    if (!fillerSegments.length) return
+    if (!fillerOccurrences.length) return
     let currentTime = activePlayTime
     const player = ytPlayerRef.current || ytPlayer
     if (player && typeof player.getCurrentTime === 'function') {
@@ -706,15 +791,15 @@ function App() {
     }
 
     if (direction === 'next') {
-      const nextIndex = fillerSegments.findIndex((seg) => seg.start > currentTime + 0.3)
-      const idx = nextIndex !== -1 ? nextIndex : fillerSegments.length - 1
+      const nextIndex = fillerOccurrences.findIndex((occ) => occ.start > currentTime + 0.2)
+      const idx = nextIndex !== -1 ? nextIndex : fillerOccurrences.length - 1
       setSupercutCurrentIndex(idx)
-      seekAndPlay(Math.max(0, fillerSegments[idx].start - 0.1))
+      seekAndPlay(Math.max(0, fillerOccurrences[idx].start - 0.12))
     } else {
-      const prevSegs = fillerSegments.filter((seg) => seg.start < currentTime - 0.3)
-      const idx = prevSegs.length ? fillerSegments.indexOf(prevSegs[prevSegs.length - 1]) : 0
+      const prevOccs = fillerOccurrences.filter((occ) => occ.start < currentTime - 0.2)
+      const idx = prevOccs.length ? fillerOccurrences.indexOf(prevOccs[prevOccs.length - 1]) : 0
       setSupercutCurrentIndex(idx)
-      seekAndPlay(Math.max(0, fillerSegments[idx].start - 0.1))
+      seekAndPlay(Math.max(0, fillerOccurrences[idx].start - 0.12))
     }
   }
 
@@ -781,10 +866,10 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [fillerSegments, pauseSegments, activePlayTime])
+  }, [fillerOccurrences, pauseSegments, activePlayTime])
 
   useEffect(() => {
-    if (!isSupercutActive || !fillerSegments.length) return
+    if (!isSupercutActive || !fillerOccurrences.length) return
 
     let currentIndex = 0
     let snippetTimer: any = null
@@ -792,18 +877,18 @@ function App() {
     let isAdvancing = false
 
     const playSnippet = (index: number) => {
-      if (index >= fillerSegments.length) {
+      if (index >= fillerOccurrences.length) {
         setIsSupercutActive(false)
         return
       }
 
       currentIndex = index
       setSupercutCurrentIndex(index)
-      const seg = fillerSegments[index]
-      if (!seg) return
+      const occ = fillerOccurrences[index]
+      if (!occ) return
 
-      const startTime = Math.max(0, seg.start - 0.15)
-      const snippetDuration = Math.min(3.5, Math.max(0.9, (seg.end - seg.start) + 0.35))
+      const startTime = Math.max(0, occ.start - 0.12)
+      const snippetDuration = Math.max(0.65, Math.min(2.2, (occ.end - occ.start) + 0.25))
       seekAndPlay(startTime)
 
       if (snippetTimer) clearTimeout(snippetTimer)
@@ -820,11 +905,11 @@ function App() {
       if (snippetTimer) clearTimeout(snippetTimer)
 
       const nextIndex = currentIndex + 1
-      if (nextIndex < fillerSegments.length) {
+      if (nextIndex < fillerOccurrences.length) {
         setTimeout(() => {
           isAdvancing = false
           playSnippet(nextIndex)
-        }, 60)
+        }, 50)
       } else {
         setIsSupercutActive(false)
       }
@@ -845,18 +930,18 @@ function App() {
 
       if (currentTime > 0) {
         setActivePlayTime(currentTime)
-        const currentSeg = fillerSegments[currentIndex]
-        if (currentSeg && currentTime >= currentSeg.end + 0.25 && !isAdvancing) {
+        const currentOcc = fillerOccurrences[currentIndex]
+        if (currentOcc && currentTime >= currentOcc.end + 0.15 && !isAdvancing) {
           advanceNext()
         }
       }
-    }, 100)
+    }, 80)
 
     return () => {
       if (snippetTimer) clearTimeout(snippetTimer)
       if (pollTimer) clearInterval(pollTimer)
     }
-  }, [isSupercutActive, fillerSegments])
+  }, [isSupercutActive, fillerOccurrences])
 
   const downloadCleanAudio = async () => {
     if (!result) return
@@ -2489,7 +2574,7 @@ ${advice.summary}
                           </div>
                         )}
                         <span className="sniper-summary-tag">
-                          {fillerSegments.length} Füllwörter {pauseSegments.length > 0 ? `· ${pauseSegments.length} Pausen` : ''}
+                          {fillerOccurrences.length} Füllwörter {pauseSegments.length > 0 ? `· ${pauseSegments.length} Pausen` : ''}
                         </span>
                       </div>
                     </div>
@@ -2521,16 +2606,16 @@ ${advice.summary}
                         )
                       })}
 
-                      {/* Filler markers */}
-                      {fillerSegments.map((seg) => {
-                        const leftPercent = (seg.start / (result.duration || 1)) * 100
-                        const widthPercent = Math.max(0.6, ((seg.end - seg.start) / (result.duration || 1)) * 100)
+                      {/* Filler markers with sub-second precision */}
+                      {fillerOccurrences.map((occ) => {
+                        const leftPercent = (occ.start / (result.duration || 1)) * 100
+                        const widthPercent = Math.max(0.5, ((occ.end - occ.start) / (result.duration || 1)) * 100)
                         return (
                           <div
-                            key={`${seg.start}-${seg.end}`}
+                            key={occ.id}
                             className="timeline-filler-marker"
                             style={{ left: `${leftPercent}%`, width: `${widthPercent}%` }}
-                            title={`Füllwort bei ${formatTimestamp(seg.start)}: „${seg.text}“`}
+                            title={`Füllwort „${occ.word}“ bei ${formatTimestamp(occ.start)}${occ.speakerName ? ` (${occ.speakerName})` : ''}`}
                           />
                         )
                       })}
@@ -2553,19 +2638,19 @@ ${advice.summary}
                             type="button"
                             className="player-control-button"
                             onClick={() => jumpToFiller('prev')}
-                            disabled={!fillerSegments.length || currentFillerIndex <= 0}
+                            disabled={!fillerOccurrences.length || currentFillerIndex <= 0}
                             title="Tastenkürzel: Alt + Pfeil links"
                           >
                             ⏮️ Vorheriges
                           </button>
                           <span className="sniper-counter-badge">
-                            {currentFillerIndex >= 0 ? currentFillerIndex + 1 : 0} / {fillerSegments.length}
+                            {currentFillerIndex >= 0 ? currentFillerIndex + 1 : 0} / {fillerOccurrences.length}
                           </span>
                           <button
                             type="button"
                             className="player-control-button"
                             onClick={() => jumpToFiller('next')}
-                            disabled={!fillerSegments.length || (currentFillerIndex >= fillerSegments.length - 1 && currentFillerIndex !== -1)}
+                            disabled={!fillerOccurrences.length || (currentFillerIndex >= fillerOccurrences.length - 1 && currentFillerIndex !== -1)}
                             title="Tastenkürzel: Alt + Pfeil rechts"
                           >
                             Nächstes ⏭️
@@ -2607,7 +2692,7 @@ ${advice.summary}
                           type="button"
                           className={isSupercutActive ? 'player-control-button supercut-btn active' : 'player-control-button supercut-btn'}
                           onClick={() => setIsSupercutActive(!isSupercutActive)}
-                          disabled={!fillerSegments.length}
+                          disabled={!fillerOccurrences.length}
                         >
                           🎧 {isSupercutActive ? 'Supercut beenden' : 'Füllwort-Supercut abspielen'}
                         </button>
@@ -2617,9 +2702,9 @@ ${advice.summary}
                       </div>
                     </div>
 
-                    {isSupercutActive && fillerSegments.length > 0 && (
+                    {isSupercutActive && fillerOccurrences.length > 0 && (
                       <div className="supercut-badge">
-                        ⚡ Supercut läuft: Füllwort {supercutCurrentIndex + 1} von {fillerSegments.length}
+                        ⚡ Supercut läuft: Füllwort {supercutCurrentIndex + 1} von {fillerOccurrences.length}
                       </div>
                     )}
                   </div>

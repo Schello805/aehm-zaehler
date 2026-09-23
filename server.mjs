@@ -416,6 +416,7 @@ const performSpeakerDiarization = (rawSegments, words) => {
       end: segEnd,
       text: segText,
       pitch: segPitch,
+      words: s.words || [],
       counts: countSegmentWords(segText, words),
       wpm: isNaN(wpm) ? 0 : Math.min(300, Math.max(0, wpm)),
       speakerId,
@@ -1043,9 +1044,25 @@ app.post('/api/clean-audio', upload.single('file'), async (request, response) =>
       return response.send(file.buffer)
     }
 
-    const removeIntervals = fillerSegments
-      .map((s) => [Math.max(0, Number(s.start || 0) - 0.05), Number(s.end || 0) + 0.05])
-      .sort((a, b) => a[0] - b[0])
+    const removeIntervals = []
+    for (const seg of fillerSegments) {
+      if (Array.isArray(seg.words) && seg.words.length > 0) {
+        let foundWord = false
+        for (const w of seg.words) {
+          const wClean = String(w.clean || w.word || '').trim().toLowerCase()
+          if (rawWords.some((rw) => wClean === rw || wClean.includes(rw))) {
+            removeIntervals.push([Math.max(0, Number(w.start || 0) - 0.04), Number(w.end || 0) + 0.04])
+            foundWord = true
+          }
+        }
+        if (!foundWord) {
+          removeIntervals.push([Math.max(0, Number(seg.start || 0) - 0.05), Number(seg.end || 0) + 0.05])
+        }
+      } else {
+        removeIntervals.push([Math.max(0, Number(seg.start || 0) - 0.05), Number(seg.end || 0) + 0.05])
+      }
+    }
+    removeIntervals.sort((a, b) => a[0] - b[0])
 
     const mergedRemove = []
     for (const interval of removeIntervals) {
