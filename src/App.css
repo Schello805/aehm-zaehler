@@ -2306,13 +2306,66 @@ h2 {
 footer {
   display: flex;
   justify-content: space-between;
-  padding: 20px 0 27px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 24px 0 32px;
+  margin-top: 32px;
   border-top: 1px solid var(--line);
   color: var(--muted);
   font-family: 'SFMono-Regular', Consolas, monospace;
-  font-size: 10px;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.3px;
+}
+
+.footer-left {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.footer-author {
+  font-weight: 600;
+  color: var(--ink);
+  opacity: 0.9;
+}
+
+.footer-divider {
+  opacity: 0.4;
+}
+
+.footer-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.footer-github-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ink);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 11px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  transition: all 0.2s ease;
+}
+
+.footer-github-link:hover {
+  border-color: var(--ink);
+  transform: translateY(-1px);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.08);
+}
+
+.footer-github-icon {
+  width: 15px;
+  height: 15px;
+  fill: currentColor;
 }
 
 @media (max-width: 980px) {
