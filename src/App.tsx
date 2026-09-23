@@ -1897,6 +1897,7 @@ ${advice.summary}
             }
           }}
           onGoToAnalysis={() => setView('analyse')}
+          onDeleteEntry={deleteHistoryEntry}
         />
       ) : view === 'live' ? (
         <LiveStudio

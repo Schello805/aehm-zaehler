@@ -5,6 +5,7 @@ interface RankingViewProps {
   history: HistoryEntry[]
   onOpenAnalysis: (entry: HistoryEntry, autoStartSupercut?: boolean) => void
   onGoToAnalysis: () => void
+  onDeleteEntry?: (entryId: string) => void
 }
 
 type RankingCategory = 'media' | 'speakers'
@@ -165,10 +166,28 @@ export const RankingView: React.FC<RankingViewProps> = ({
   history,
   onOpenAnalysis,
   onGoToAnalysis,
+  onDeleteEntry,
 }) => {
   const [category, setCategory] = useState<RankingCategory>('media')
   const [sortField, setSortField] = useState<RankingSort>('fillerWords')
   const [searchQuery, setSearchQuery] = useState('')
+
+  // Delete modal state
+  const [deleteModalItem, setDeleteModalItem] = useState<{ id: string; title: string; isDemo?: boolean; fillerWords: number } | null>(null)
+  const [deletePassword, setDeletePassword] = useState('')
+  const [deleteShowPassword, setDeleteShowPassword] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
+  const [deleteLoading, setDeleteLoading] = useState(false)
+  const [deleteSuccessMsg, setDeleteSuccessMsg] = useState('')
+
+  // Hidden demo items (stored in localStorage)
+  const [hiddenDemoIds, setHiddenDemoIds] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('aehm_hidden_demo_ranking') || '[]')
+    } catch {
+      return []
+    }
+  })
 
   // 1. Transform History into Media Ranking Items
   const mediaItems = useMemo<MediaRankingItem[]>(() => {
@@ -200,12 +219,13 @@ export const RankingView: React.FC<RankingViewProps> = ({
       }
     })
 
-    // If history is small, append benchmarks that aren't duplicate sources
+    // If history is small, append benchmarks that aren't duplicate sources and not hidden
     const historySources = new Set(fromHistory.map((h) => h.source))
-    const benchmarksToAdd = DEMO_BENCHMARKS.filter((b) => !historySources.has(b.source))
+    const benchmarksToAdd = DEMO_BENCHMARKS
+      .filter((b) => !historySources.has(b.source) && !hiddenDemoIds.includes(b.id))
 
     return [...fromHistory, ...benchmarksToAdd]
-  }, [history])
+  }, [history, hiddenDemoIds])
 
   // 2. Transform History into Speaker Ranking Items
   const speakerItems = useMemo<SpeakerRankingItem[]>(() => {
@@ -366,11 +386,68 @@ export const RankingView: React.FC<RankingViewProps> = ({
     return `${val.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`
   }
 
+  const confirmDelete = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!deleteModalItem) return
+    if (!deletePassword.trim()) {
+      setDeleteError('Bitte Admin-Passwort eingeben.')
+      return
+    }
+
+    setDeleteLoading(true)
+    setDeleteError('')
+
+    try {
+      const res = await fetch('/api/admin/verify-delete-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: deletePassword })
+      })
+      const data = await res.json()
+
+      if (!res.ok || !data.success) {
+        setDeleteError(data.error || 'Fehler beim Überprüfen des Passworts.')
+        setDeleteLoading(false)
+        return
+      }
+
+      // Success: Delete entry
+      if (deleteModalItem.isDemo) {
+        const nextHidden = [...hiddenDemoIds, deleteModalItem.id]
+        setHiddenDemoIds(nextHidden)
+        try {
+          localStorage.setItem('aehm_hidden_demo_ranking', JSON.stringify(nextHidden))
+        } catch {}
+      } else if (onDeleteEntry) {
+        onDeleteEntry(deleteModalItem.id)
+      }
+
+      setDeleteSuccessMsg(`„${deleteModalItem.title}“ wurde erfolgreich aus der Rangliste gelöscht.`)
+      setDeleteModalItem(null)
+      setDeletePassword('')
+      setDeleteError('')
+      setTimeout(() => setDeleteSuccessMsg(''), 4500)
+    } catch {
+      setDeleteError('Verbindung zum Server fehlgeschlagen.')
+    } finally {
+      setDeleteLoading(false)
+    }
+  }
+
   // Active items based on selected category
   const topThree = category === 'media' ? sortedMedia.slice(0, 3) : sortedSpeakers.slice(0, 3)
 
   return (
     <div className="ranking-page-container">
+      {/* 🔔 Success Notification Toast */}
+      {deleteSuccessMsg && (
+        <div className="ranking-success-toast">
+          <span className="toast-icon">✅</span>
+          <span>{deleteSuccessMsg}</span>
+          <button type="button" className="toast-close-btn" onClick={() => setDeleteSuccessMsg('')}>✕</button>
+        </div>
+      )}
+
       {/* 🏆 Header & Banner */}
       <section className="ranking-hero-banner">
         <div className="ranking-hero-content">
@@ -495,6 +572,19 @@ export const RankingView: React.FC<RankingViewProps> = ({
               <div className="podium-column rank-2">
                 <div className="podium-medal silver">🥈 2. Platz</div>
                 <div className="podium-card">
+                  <button
+                    type="button"
+                    className="podium-delete-corner-btn"
+                    onClick={() => setDeleteModalItem({
+                      id: topThree[1].entry.id,
+                      title: 'title' in topThree[1] ? topThree[1].title : (topThree[1] as SpeakerRankingItem).speakerName,
+                      isDemo: 'isDemo' in topThree[1] && topThree[1].isDemo,
+                      fillerWords: topThree[1].fillerWords,
+                    })}
+                    title="Diesen Eintrag löschen"
+                  >
+                    🗑️
+                  </button>
                   <div className="podium-avatar silver">2</div>
                   <h4 className="podium-item-title" title={'title' in topThree[1] ? topThree[1].title : (topThree[1] as SpeakerRankingItem).speakerName}>
                     {'title' in topThree[1] ? topThree[1].title : (topThree[1] as SpeakerRankingItem).speakerName}
@@ -542,6 +632,19 @@ export const RankingView: React.FC<RankingViewProps> = ({
                 <div className="podium-crown-badge">👑 SPITZENREITER</div>
                 <div className="podium-medal gold">🥇 1. Platz (Gold)</div>
                 <div className="podium-card gold-card">
+                  <button
+                    type="button"
+                    className="podium-delete-corner-btn"
+                    onClick={() => setDeleteModalItem({
+                      id: topThree[0].entry.id,
+                      title: 'title' in topThree[0] ? topThree[0].title : (topThree[0] as SpeakerRankingItem).speakerName,
+                      isDemo: 'isDemo' in topThree[0] && topThree[0].isDemo,
+                      fillerWords: topThree[0].fillerWords,
+                    })}
+                    title="Diesen Eintrag löschen"
+                  >
+                    🗑️
+                  </button>
                   <div className="podium-avatar gold">1</div>
                   <h4 className="podium-item-title gold-title" title={'title' in topThree[0] ? topThree[0].title : (topThree[0] as SpeakerRankingItem).speakerName}>
                     {'title' in topThree[0] ? topThree[0].title : (topThree[0] as SpeakerRankingItem).speakerName}
@@ -600,6 +703,19 @@ export const RankingView: React.FC<RankingViewProps> = ({
               <div className="podium-column rank-3">
                 <div className="podium-medal bronze">🥉 3. Platz</div>
                 <div className="podium-card">
+                  <button
+                    type="button"
+                    className="podium-delete-corner-btn"
+                    onClick={() => setDeleteModalItem({
+                      id: topThree[2].entry.id,
+                      title: 'title' in topThree[2] ? topThree[2].title : (topThree[2] as SpeakerRankingItem).speakerName,
+                      isDemo: 'isDemo' in topThree[2] && topThree[2].isDemo,
+                      fillerWords: topThree[2].fillerWords,
+                    })}
+                    title="Diesen Eintrag löschen"
+                  >
+                    🗑️
+                  </button>
                   <div className="podium-avatar bronze">3</div>
                   <h4 className="podium-item-title" title={'title' in topThree[2] ? topThree[2].title : (topThree[2] as SpeakerRankingItem).speakerName}>
                     {'title' in topThree[2] ? topThree[2].title : (topThree[2] as SpeakerRankingItem).speakerName}
@@ -756,6 +872,14 @@ export const RankingView: React.FC<RankingViewProps> = ({
                         >
                           🎧 Supercut
                         </button>
+                        <button
+                          type="button"
+                          className="ranking-btn-delete"
+                          onClick={() => setDeleteModalItem({ id: item.entry.id, title, isDemo, fillerWords: item.fillerWords })}
+                          title="Eintrag aus Rangliste löschen (Admin-Passwort erforderlich)"
+                        >
+                          🗑️
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -765,6 +889,91 @@ export const RankingView: React.FC<RankingViewProps> = ({
           </table>
         </div>
       </section>
+
+      {/* 🔒 Admin Password Deletion Modal Dialog */}
+      {deleteModalItem && (
+        <div className="ranking-modal-overlay" onClick={() => !deleteLoading && setDeleteModalItem(null)}>
+          <div className="ranking-modal-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="ranking-modal-header">
+              <div className="ranking-modal-title-row">
+                <span className="modal-lock-icon">🔒</span>
+                <h3>Eintrag löschen bestätigen</h3>
+              </div>
+              <button
+                type="button"
+                className="ranking-modal-close"
+                onClick={() => !deleteLoading && setDeleteModalItem(null)}
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={confirmDelete} className="ranking-modal-body">
+              <div className="delete-target-preview">
+                <span className="target-label">Ausgewählter Eintrag:</span>
+                <strong className="target-title">{deleteModalItem.title}</strong>
+                <span className="target-fillers">🔴 {deleteModalItem.fillerWords} Füllwörter</span>
+              </div>
+
+              <div className="delete-warning-text">
+                ⚠️ Das Löschen eines Eintrags ist <strong>unwiderruflich</strong> und erfordert das Admin-Passwort.
+              </div>
+
+              <div className="delete-password-input-group">
+                <label htmlFor="admin-delete-pwd" className="input-label">Admin-Passwort:</label>
+                <div className="password-field-wrapper">
+                  <input
+                    id="admin-delete-pwd"
+                    type={deleteShowPassword ? 'text' : 'password'}
+                    placeholder="Admin-Passwort eingeben..."
+                    value={deletePassword}
+                    onChange={(e) => setDeletePassword(e.target.value)}
+                    autoFocus
+                    disabled={deleteLoading}
+                    className="ranking-password-input"
+                  />
+                  <button
+                    type="button"
+                    className="toggle-pwd-btn"
+                    onClick={() => setDeleteShowPassword(!deleteShowPassword)}
+                    title={deleteShowPassword ? 'Passwort verbergen' : 'Passwort anzeigen'}
+                  >
+                    {deleteShowPassword ? '🙈' : '👁️'}
+                  </button>
+                </div>
+                <small className="ip-lock-subhint">
+                  🛡️ <strong>Sicherheits-Schutz:</strong> Nach dem 3. Fehlversuch wird deine IP-Adresse automatisch für 15 Minuten gesperrt.
+                </small>
+              </div>
+
+              {deleteError && (
+                <div className="delete-error-alert" role="alert">
+                  <span className="error-icon">🚨</span>
+                  <span>{deleteError}</span>
+                </div>
+              )}
+
+              <div className="ranking-modal-actions">
+                <button
+                  type="button"
+                  className="modal-cancel-btn"
+                  onClick={() => setDeleteModalItem(null)}
+                  disabled={deleteLoading}
+                >
+                  Abbrechen
+                </button>
+                <button
+                  type="submit"
+                  className="modal-delete-btn"
+                  disabled={deleteLoading || !deletePassword.trim()}
+                >
+                  {deleteLoading ? '⏳ Wird geprüft...' : '🗑️ Unwiderruflich löschen'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

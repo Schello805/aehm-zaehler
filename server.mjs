@@ -6,7 +6,34 @@ import { execFile, spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+
+const projectRoot = process.cwd()
+
+// Load .env file safely without exposing secrets in code repository
+const envFile = join(projectRoot, '.env')
+if (existsSync(envFile)) {
+  try {
+    if (typeof process.loadEnvFile === 'function') {
+      process.loadEnvFile(envFile)
+    } else {
+      const content = readFileSync(envFile, 'utf8')
+      for (const line of content.split('\n')) {
+        const trimmed = line.trim()
+        if (trimmed && !trimmed.startsWith('#')) {
+          const eqIdx = trimmed.indexOf('=')
+          if (eqIdx !== -1) {
+            const key = trimmed.slice(0, eqIdx).trim()
+            const val = trimmed.slice(eqIdx + 1).trim()
+            if (key && process.env[key] === undefined) {
+              process.env[key] = val
+            }
+          }
+        }
+      }
+    }
+  } catch {}
+}
 
 const app = express()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 200 * 1024 * 1024 } })
@@ -23,7 +50,6 @@ const getYtDlpPath = () => {
 
 const youtubedl = createYoutubeDl(getYtDlpPath())
 const runCommand = promisify(execFile)
-const projectRoot = process.cwd()
 
 const getPythonPath = () => {
   if (process.env.PYTHON_PATH && existsSync(process.env.PYTHON_PATH)) return process.env.PYTHON_PATH
@@ -1120,6 +1146,89 @@ app.post('/api/clean-audio', upload.single('file'), async (request, response) =>
   } finally {
     if (typeof temporaryDirectory === 'string') await rm(temporaryDirectory, { recursive: true, force: true })
   }
+})
+
+// In-memory failed deletion attempts per IP: ip -> { count: number, lockedUntil: number | null, lastAttempt: number }
+const deleteAttemptsByIp = new Map()
+
+const getClientIp = (req) => {
+  const forwarded = req.headers['x-forwarded-for']
+  if (typeof forwarded === 'string' && forwarded.trim()) {
+    return forwarded.split(',')[0].trim()
+  }
+  return req.socket?.remoteAddress || req.ip || '127.0.0.1'
+}
+
+// Clean up old IP rate-limit records periodically
+setInterval(() => {
+  const now = Date.now()
+  for (const [ip, data] of deleteAttemptsByIp.entries()) {
+    if (data.lockedUntil && now > data.lockedUntil + 3600000) {
+      deleteAttemptsByIp.delete(ip)
+    } else if (!data.lockedUntil && now > data.lastAttempt + 3600000) {
+      deleteAttemptsByIp.delete(ip)
+    }
+  }
+}, 5 * 60 * 1000)
+
+app.post('/api/admin/verify-delete-password', (request, response) => {
+  const ip = getClientIp(request)
+  const now = Date.now()
+  let record = deleteAttemptsByIp.get(ip)
+  if (!record) {
+    record = { count: 0, lockedUntil: null, lastAttempt: now }
+    deleteAttemptsByIp.set(ip, record)
+  }
+
+  // 1. Check if IP is currently locked
+  if (record.lockedUntil && now < record.lockedUntil) {
+    const remainingSeconds = Math.ceil((record.lockedUntil - now) / 1000)
+    const remainingMinutes = Math.ceil(remainingSeconds / 60)
+    return response.status(429).json({
+      error: `Zu viele Fehlversuche! Ihre IP-Adresse (${ip}) ist für noch ca. ${remainingMinutes} Minute(n) gesperrt.`,
+      locked: true,
+      remainingSeconds,
+    })
+  }
+
+  // If lockout expired, reset
+  if (record.lockedUntil && now >= record.lockedUntil) {
+    record.count = 0
+    record.lockedUntil = null
+  }
+
+  const { password } = request.body || {}
+  const expectedPassword = process.env.ADMIN_DELETE_PASSWORD || 'Secure1!'
+
+  if (!password || String(password) !== String(expectedPassword)) {
+    record.count += 1
+    record.lastAttempt = now
+
+    if (record.count >= 3) {
+      const lockMinutes = 15
+      record.lockedUntil = now + lockMinutes * 60 * 1000
+      return response.status(403).json({
+        error: `Falsches Passwort! 3 Fehlversuche erreicht. Ihre IP-Adresse (${ip}) wurde für ${lockMinutes} Minuten gesperrt.`,
+        attemptsLeft: 0,
+        locked: true,
+        remainingSeconds: lockMinutes * 60,
+      })
+    }
+
+    const attemptsLeft = 3 - record.count
+    return response.status(401).json({
+      error: `Falsches Passwort! Noch ${attemptsLeft} ${attemptsLeft === 1 ? 'Versuch' : 'Versuche'} vor IP-Sperre.`,
+      attemptsLeft,
+      locked: false,
+    })
+  }
+
+  // Success: reset attempts for this IP
+  deleteAttemptsByIp.delete(ip)
+  return response.json({
+    success: true,
+    message: 'Passwort erfolgreich verifiziert.',
+  })
 })
 
 const distDirectory = join(projectRoot, 'dist')
