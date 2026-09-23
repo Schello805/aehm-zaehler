@@ -5296,52 +5296,44 @@ body { transition: background 0.35s ease, color 0.35s ease; }
   background: rgba(239, 68, 68, 0.08);
   border: 1px solid rgba(239, 68, 68, 0.25);
   color: #ef4444;
-  font-size: 12px;
-  padding: 6px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 6px 10px;
   border-radius: 4px;
   cursor: pointer;
   white-space: nowrap;
   transition: all 0.15s ease;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .ranking-btn-delete:hover {
   background: #ef4444;
   color: white;
   border-color: #ef4444;
-  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.35);
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3);
 }
 
-.podium-delete-corner-btn {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  background: rgba(0, 0, 0, 0.25);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  color: rgba(255, 255, 255, 0.7);
-  font-size: 11px;
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
+.podium-delete-btn {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  color: #ef4444;
+  font-size: 13px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   transition: all 0.15s ease;
-  z-index: 5;
-  opacity: 0.6;
 }
 
-.podium-card:hover .podium-delete-corner-btn {
-  opacity: 1;
-}
-
-.podium-delete-corner-btn:hover {
+.podium-delete-btn:hover {
   background: #ef4444;
   color: white;
   border-color: #ef4444;
-  transform: scale(1.1);
-  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.4);
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3);
 }
 
 /* 🔔 Success Toast */

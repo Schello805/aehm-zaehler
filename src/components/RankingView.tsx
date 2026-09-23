@@ -572,19 +572,6 @@ export const RankingView: React.FC<RankingViewProps> = ({
               <div className="podium-column rank-2">
                 <div className="podium-medal silver">🥈 2. Platz</div>
                 <div className="podium-card">
-                  <button
-                    type="button"
-                    className="podium-delete-corner-btn"
-                    onClick={() => setDeleteModalItem({
-                      id: topThree[1].entry.id,
-                      title: 'title' in topThree[1] ? topThree[1].title : (topThree[1] as SpeakerRankingItem).speakerName,
-                      isDemo: 'isDemo' in topThree[1] && topThree[1].isDemo,
-                      fillerWords: topThree[1].fillerWords,
-                    })}
-                    title="Diesen Eintrag löschen"
-                  >
-                    🗑️
-                  </button>
                   <div className="podium-avatar silver">2</div>
                   <h4 className="podium-item-title" title={'title' in topThree[1] ? topThree[1].title : (topThree[1] as SpeakerRankingItem).speakerName}>
                     {'title' in topThree[1] ? topThree[1].title : (topThree[1] as SpeakerRankingItem).speakerName}
@@ -612,13 +599,28 @@ export const RankingView: React.FC<RankingViewProps> = ({
                     ))}
                   </div>
 
-                  <button
-                    type="button"
-                    className="podium-open-btn"
-                    onClick={() => onOpenAnalysis(topThree[1].entry)}
-                  >
-                    🔍 Analyse öffnen
-                  </button>
+                  <div className="podium-actions-group">
+                    <button
+                      type="button"
+                      className="podium-open-btn"
+                      onClick={() => onOpenAnalysis(topThree[1].entry)}
+                    >
+                      🔍 Analyse öffnen
+                    </button>
+                    <button
+                      type="button"
+                      className="podium-delete-btn"
+                      onClick={() => setDeleteModalItem({
+                        id: topThree[1].entry.id,
+                        title: 'title' in topThree[1] ? topThree[1].title : (topThree[1] as SpeakerRankingItem).speakerName,
+                        isDemo: 'isDemo' in topThree[1] && topThree[1].isDemo,
+                        fillerWords: topThree[1].fillerWords,
+                      })}
+                      title="Diesen Eintrag löschen"
+                    >
+                      🗑️
+                    </button>
+                  </div>
                 </div>
                 <div className="podium-pedestal silver-pedestal">
                   <span>SILBER</span>
@@ -632,19 +634,6 @@ export const RankingView: React.FC<RankingViewProps> = ({
                 <div className="podium-crown-badge">👑 SPITZENREITER</div>
                 <div className="podium-medal gold">🥇 1. Platz (Gold)</div>
                 <div className="podium-card gold-card">
-                  <button
-                    type="button"
-                    className="podium-delete-corner-btn"
-                    onClick={() => setDeleteModalItem({
-                      id: topThree[0].entry.id,
-                      title: 'title' in topThree[0] ? topThree[0].title : (topThree[0] as SpeakerRankingItem).speakerName,
-                      isDemo: 'isDemo' in topThree[0] && topThree[0].isDemo,
-                      fillerWords: topThree[0].fillerWords,
-                    })}
-                    title="Diesen Eintrag löschen"
-                  >
-                    🗑️
-                  </button>
                   <div className="podium-avatar gold">1</div>
                   <h4 className="podium-item-title gold-title" title={'title' in topThree[0] ? topThree[0].title : (topThree[0] as SpeakerRankingItem).speakerName}>
                     {'title' in topThree[0] ? topThree[0].title : (topThree[0] as SpeakerRankingItem).speakerName}
@@ -690,6 +679,19 @@ export const RankingView: React.FC<RankingViewProps> = ({
                     >
                       🎧 Supercut
                     </button>
+                    <button
+                      type="button"
+                      className="podium-delete-btn"
+                      onClick={() => setDeleteModalItem({
+                        id: topThree[0].entry.id,
+                        title: 'title' in topThree[0] ? topThree[0].title : (topThree[0] as SpeakerRankingItem).speakerName,
+                        isDemo: 'isDemo' in topThree[0] && topThree[0].isDemo,
+                        fillerWords: topThree[0].fillerWords,
+                      })}
+                      title="Diesen Eintrag löschen"
+                    >
+                      🗑️
+                    </button>
                   </div>
                 </div>
                 <div className="podium-pedestal gold-pedestal">
@@ -703,19 +705,6 @@ export const RankingView: React.FC<RankingViewProps> = ({
               <div className="podium-column rank-3">
                 <div className="podium-medal bronze">🥉 3. Platz</div>
                 <div className="podium-card">
-                  <button
-                    type="button"
-                    className="podium-delete-corner-btn"
-                    onClick={() => setDeleteModalItem({
-                      id: topThree[2].entry.id,
-                      title: 'title' in topThree[2] ? topThree[2].title : (topThree[2] as SpeakerRankingItem).speakerName,
-                      isDemo: 'isDemo' in topThree[2] && topThree[2].isDemo,
-                      fillerWords: topThree[2].fillerWords,
-                    })}
-                    title="Diesen Eintrag löschen"
-                  >
-                    🗑️
-                  </button>
                   <div className="podium-avatar bronze">3</div>
                   <h4 className="podium-item-title" title={'title' in topThree[2] ? topThree[2].title : (topThree[2] as SpeakerRankingItem).speakerName}>
                     {'title' in topThree[2] ? topThree[2].title : (topThree[2] as SpeakerRankingItem).speakerName}
@@ -743,13 +732,28 @@ export const RankingView: React.FC<RankingViewProps> = ({
                     ))}
                   </div>
 
-                  <button
-                    type="button"
-                    className="podium-open-btn"
-                    onClick={() => onOpenAnalysis(topThree[2].entry)}
-                  >
-                    🔍 Analyse öffnen
-                  </button>
+                  <div className="podium-actions-group">
+                    <button
+                      type="button"
+                      className="podium-open-btn"
+                      onClick={() => onOpenAnalysis(topThree[2].entry)}
+                    >
+                      🔍 Analyse öffnen
+                    </button>
+                    <button
+                      type="button"
+                      className="podium-delete-btn"
+                      onClick={() => setDeleteModalItem({
+                        id: topThree[2].entry.id,
+                        title: 'title' in topThree[2] ? topThree[2].title : (topThree[2] as SpeakerRankingItem).speakerName,
+                        isDemo: 'isDemo' in topThree[2] && topThree[2].isDemo,
+                        fillerWords: topThree[2].fillerWords,
+                      })}
+                      title="Diesen Eintrag löschen"
+                    >
+                      🗑️
+                    </button>
+                  </div>
                 </div>
                 <div className="podium-pedestal bronze-pedestal">
                   <span>BRONZE</span>
