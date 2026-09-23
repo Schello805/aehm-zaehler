@@ -1259,11 +1259,17 @@ ${advice.summary}
     setActiveHistoryId(null)
     setUrl('')
     setFile(null)
-    setError('')
+    if (fileInputRef.current) {
+      try { fileInputRef.current.value = '' } catch {}
+    }
+    setAnalysisTitle('')
     setAnalysisNote('')
     setAnalysisTags('')
+    setError('')
     setFetchedMediaInfo(null)
     setQueueInfo(null)
+    setIsSupercutActive(false)
+    setProgress({ percent: 0, step: 0, label: '', remainingSeconds: null })
     try {
       if (window.location.search) {
         window.history.replaceState({}, '', window.location.pathname)
