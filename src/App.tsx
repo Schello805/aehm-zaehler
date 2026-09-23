@@ -1674,6 +1674,54 @@ function Settings({
   )
 }
 
+// Multi-variant mappings for common German hesitation sounds and filler phrases
+const FILLER_VARIANT_MAP: Record<string, string[][]> = {
+  "äh": [["äh", "ä", "ah", "aeh", "eh", "öh", "oeh", "ähh", "ähhh", "uh", "er"]],
+  "ähm": [["ähm", "aehm", "ehm", "öhm", "ahm", "hm", "hmm", "hmmm", "uhm", "erm", "äm", "aem"]],
+  "also äh": [["also"], ["äh", "ä", "ah", "aeh", "eh", "öh", "oeh", "ähh", "ähhh", "uh", "er"]],
+  "also ähm": [["also"], ["ähm", "aehm", "ehm", "öhm", "ahm", "hm", "hmm", "hmmm", "uhm", "erm", "äm", "aem"]],
+  "aber äh": [["aber"], ["äh", "ä", "ah", "aeh", "eh", "öh", "oeh", "ähh", "ähhh", "uh", "er"]],
+  "aber ähm": [["aber"], ["ähm", "aehm", "ehm", "öhm", "ahm", "hm", "hmm", "hmmm", "uhm", "erm", "äm", "aem"]],
+  "und äh": [["und"], ["äh", "ä", "ah", "aeh", "eh", "öh", "oeh", "ähh", "ähhh", "uh", "er"]],
+  "und ähm": [["und"], ["ähm", "aehm", "ehm", "öhm", "ahm", "hm", "hmm", "hmmm", "uhm", "erm", "äm", "aem"]],
+  "sozusagen": [["sozusagen", "sozusagn"]],
+  "eigentlich": [["eigentlich"]],
+  "quasi": [["quasi"]],
+  "praktisch": [["praktisch"]],
+  "halt": [["halt"]],
+  "irgendwie": [["irgendwie"]],
+  "im grunde": [["im", "in"], ["grunde", "grund"]],
+  "im endeffekt": [["im", "in"], ["endeffekt"]]
+}
+
+function countTargetInTokens(tokens: string[], target: string): number {
+  const normTarget = target.toLowerCase().trim()
+  const patternSlots: string[][] = FILLER_VARIANT_MAP[normTarget] || (
+    (normTarget.match(/[\p{L}\p{N}]+/gu) || [normTarget]).map((tok) => [tok])
+  )
+
+  let count = 0
+  const plen = patternSlots.length
+  if (plen === 0 || tokens.length < plen) return 0
+
+  for (let i = 0; i <= tokens.length - plen; i++) {
+    let match = true
+    for (let j = 0; j < plen; j++) {
+      if (!patternSlots[j].includes(tokens[i + j])) {
+        match = false
+        break
+      }
+    }
+    if (match) {
+      count++
+      if (plen > 1) {
+        i += plen - 1
+      }
+    }
+  }
+  return count
+}
+
 function LiveStudio({ words }: { words: string[] }) {
   const [isListening, setIsListening] = useState(false)
   const [liveCount, setLiveCount] = useState(0)
@@ -1697,10 +1745,8 @@ function LiveStudio({ words }: { words: string[] }) {
   const transcriptBoxRef = useRef<HTMLDivElement | null>(null)
   // Ref for elapsedSeconds so onresult closure always has the current value (avoids stale closure, WPM=0 bug)
   const elapsedSecondsRef = useRef(0)
-  // Persistent filler counts that survive Web Speech API finalization (which strips filler words like 'äh')
-  const finalFillerCountsRef = useRef<Record<string, number>>({})
-  // Last interim transcript text to detect new filler words as they appear
-  const lastInterimRef = useRef<string>('')
+  // Segment-by-segment filler counts that permanently lock in interim and final filler hits across all spoken phrases
+  const segmentFillersRef = useRef<Map<number, Record<string, number>>>(new Map())
 
   // Auto-scroll transcript box to bottom on new content
   useEffect(() => {
@@ -1929,237 +1975,176 @@ function LiveStudio({ words }: { words: string[] }) {
   }
 
   const startListening = async () => {
-    console.log('[LiveStudio] startListening() called')
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-    console.log('[LiveStudio] SpeechRecognition available:', !!SpeechRecognition)
+    console.log("[LiveStudio] startListening() called");
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    console.log("[LiveStudio] SpeechRecognition available:", !!SpeechRecognition);
     if (!SpeechRecognition) {
-      alert('Dein Browser unterstützt keine Echtzeit-Spracherkennung. Bitte nutze Google Chrome oder MS Edge für das Live Studio.')
-      return
+      alert("Dein Browser unterstützt keine Echtzeit-Spracherkennung. Bitte nutze Google Chrome oder MS Edge für das Live Studio.");
+      return;
     }
 
     try {
-      console.log('[LiveStudio] Requesting microphone...')
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      console.log('[LiveStudio] Microphone granted, tracks:', stream.getTracks().length)
-      void startVisualizer(stream)
+      console.log("[LiveStudio] Requesting microphone...");
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      console.log("[LiveStudio] Microphone granted, tracks:", stream.getTracks().length);
+      void startVisualizer(stream);
 
-      console.log('[LiveStudio] Starting SpeechRecognition, words:', words)
-      const recognition = new SpeechRecognition()
-      recognition.continuous = true
-      recognition.interimResults = true
-      recognition.lang = 'de-DE'
-      recognition.maxAlternatives = 3
+      console.log("[LiveStudio] Starting SpeechRecognition, words:", words);
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = "de-DE";
+      recognition.maxAlternatives = 3;
 
       recognition.onresult = (event: any) => {
-        // Separate final from interim text.
-        // Chrome's de-DE model strips 'äh'/'ähm' from FINAL results but sometimes keeps them in INTERIM.
-        // We also scan ALL recognition alternatives (maxAlternatives=3) since 'äh' may appear in alt 1/2.
-        let finalText = ''
-        let interimText = ''
-        // All alternative texts combined — for filler scanning only
-        let allAlternativeText = ''
+        let finalText = "";
+        let interimText = "";
 
         for (let i = 0; i < event.results.length; i++) {
-          if (event.results[i].isFinal) {
-            finalText += event.results[i][0].transcript + ' '
-            // Collect all alternatives for filler detection
-            for (let alt = 0; alt < event.results[i].length; alt++) {
-              allAlternativeText += event.results[i][alt].transcript + ' '
-            }
+          const res = event.results[i];
+          const isFinal = res.isFinal;
+          const primaryTranscript = res[0]?.transcript || "";
+
+          if (isFinal) {
+            finalText += (finalText ? " " : "") + primaryTranscript.trim();
           } else {
-            interimText += event.results[i][0].transcript
-            // Collect all alternatives of interim results too
-            for (let alt = 0; alt < event.results[i].length; alt++) {
-              allAlternativeText += event.results[i][alt].transcript + ' '
-            }
+            interimText += (interimText ? " " : "") + primaryTranscript.trim();
           }
-        }
 
-        // 🔍 DEBUG LOGGING
-        console.log('[LiveStudio] resultIndex:', event.resultIndex, 'isFinal:', event.results[event.resultIndex]?.isFinal)
-        console.log('[LiveStudio] interimText:', JSON.stringify(interimText))
-        console.log('[LiveStudio] allAlts (first 200):', allAlternativeText.slice(0, 200))
-        console.log('[LiveStudio] words being searched:', words)
-
-        // Display: final + current interim
-        const displayText = finalText + interimText
-        setLiveTranscript(displayText)
-
-        // WPM — use elapsedSecondsRef.current (NOT the stale state variable from closure!)
-        const secs = elapsedSecondsRef.current
-        const totalTokens = displayText.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []
-        if (totalTokens.length > 0 && secs > 0) {
-          const wpm = Math.round((totalTokens.length / secs) * 60)
-          setSpeechPace(wpm)
-          setWpmHistory((prev) => {
-            const next = [...prev, wpm]
-            return next.length > 60 ? next.slice(-60) : next
-          })
-        }
-
-        // Phonetic variants: Chrome's German model sometimes outputs 'ä' instead of 'äh',
-        // or 'ah' (romanized). We expand each search word to include common variants.
-        const getVariants = (word: string): string[] => {
-          const w = word.toLowerCase().trim()
-          if (w === 'äh')  return ['äh', 'ä', 'ah', 'ähh', 'ähhh', 'a']
-          if (w === 'ähm') return ['ähm', 'äh', 'ähm', 'aam', 'hm', 'hmm', 'hmmm']
-          return [w]
-        }
-
-        // Helper: count a word (and its variants) in text
-        const countWordInText = (text: string, word: string): number => {
-          const variants = getVariants(word)
-          const toks = text.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []
-          let total = 0
-          for (const variant of variants) {
-            const vToks = variant.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []
-            if (!vToks.length) continue
-            for (let i = 0; i <= toks.length - vToks.length; i++) {
-              if (vToks.every((tok, offset) => toks[i + offset] === tok)) total++
-            }
+          // Extract all alternative texts for segment i
+          const allAlts: string[] = [];
+          for (let alt = 0; alt < res.length; alt++) {
+            const altText = res[alt]?.transcript;
+            if (altText) allAlts.push(altText);
           }
-          // Deduplicate: don't double-count (take max occurrence from any single variant)
-          return Math.max(...variants.map(variant => {
-            const vToks = variant.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []
-            if (!vToks.length) return 0
-            let c = 0
-            for (let i = 0; i <= toks.length - vToks.length; i++) {
-              if (vToks.every((tok, offset) => toks[i + offset] === tok)) c++
-            }
-            return c
-          }))
-        }
+          if (allAlts.length === 0 && primaryTranscript) {
+            allAlts.push(primaryTranscript);
+          }
 
-        const countFillers = (text: string): Record<string, number> => {
-          const result: Record<string, number> = {}
+          // Compute max occurrence for each search word in segment i across alternatives
+          const segExisting = segmentFillersRef.current.get(i) || {};
+          const segUpdated: Record<string, number> = { ...segExisting };
+
           for (const w of words) {
-            const c = countWordInText(text, w)
-            if (c > 0) result[w] = c
+            const bestForThisAltScan = Math.max(
+              0,
+              ...allAlts.map((text) => {
+                const toks = text.toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
+                return countTargetInTokens(toks, w);
+              })
+            );
+            // Lock in occurrences so even if finalized text drops hesitation sounds, they remain counted
+            segUpdated[w] = Math.max(segExisting[w] || 0, bestForThisAltScan);
           }
-          return result
+
+          segmentFillersRef.current.set(i, segUpdated);
         }
 
-        // Scan BOTH interimText and allAlternativeText for maximum coverage
-        const scanText = interimText + ' ' + allAlternativeText
-
-        // When a new result finalizes: lock in the best filler count seen so far
-        const hasNewFinal = event.results[event.resultIndex]?.isFinal
-        if (hasNewFinal) {
-          const finalCounts = countFillers(finalText + ' ' + allAlternativeText)
+        // Sum counts for all words across all segments
+        const totalCounts: Record<string, number> = {};
+        for (const w of words) totalCounts[w] = 0;
+        segmentFillersRef.current.forEach((segCounts) => {
           for (const w of words) {
-            const fromFinal = finalCounts[w] || 0
-            const fromInterim = finalFillerCountsRef.current[w] || 0
-            finalFillerCountsRef.current[w] = Math.max(fromFinal, fromInterim)
+            totalCounts[w] += (segCounts[w] || 0);
           }
-          lastInterimRef.current = ''
-        }
+        });
 
-        // Update persistent counts from current interim scan
-        if (scanText.trim() && scanText !== lastInterimRef.current) {
-          lastInterimRef.current = scanText
-          const interimCounts = countFillers(scanText)
-          for (const w of words) {
-            const fromInterim = interimCounts[w] || 0
-            const alreadyPersisted = finalFillerCountsRef.current[w] || 0
-            if (fromInterim > alreadyPersisted) {
-              finalFillerCountsRef.current[w] = fromInterim
-            }
-          }
-        }
+        const totalFiller = Object.values(totalCounts).reduce((a, b) => a + b, 0);
+        const fullTranscript = (finalText + (interimText ? " " + interimText : "")).trim();
 
-        // Build total display counts
-        const currentScanCounts = countFillers(scanText)
-        const totalCounts: Record<string, number> = {}
-        for (const w of words) {
-          totalCounts[w] = Math.max(finalFillerCountsRef.current[w] || 0, currentScanCounts[w] || 0)
-        }
-        const totalFiller = Object.values(totalCounts).reduce((a, b) => a + b, 0)
+        console.log("[LiveStudio] Transcript:", fullTranscript);
+        console.log("[LiveStudio] Total counts:", totalCounts, "Total fillers:", totalFiller);
 
-        console.log('[LiveStudio] scanText fillers:', currentScanCounts)
-        console.log('[LiveStudio] persistent counts:', { ...finalFillerCountsRef.current })
-        console.log('[LiveStudio] totalFiller:', totalFiller)
+        setLiveTranscript(fullTranscript);
+        setWordCounts(totalCounts);
 
-        setWordCounts(totalCounts)
+        // Trigger animations & alerts when count increases
         setLiveCount((prev) => {
           if (totalFiller > prev) {
-            popCounterAnimation()
-            spawnParticles()
+            popCounterAnimation();
+            spawnParticles();
           }
-          return totalFiller
-        })
+          return totalFiller;
+        });
 
-        const lastWordMatched = words.find((w) => (totalCounts[w] || 0) > (wordCounts[w] || 0))
-        if (lastWordMatched) {
-          setLastAlert(`Füllwort erkannt: „${lastWordMatched}"! Kurz innehalten & Stimme absenken.`)
+        // WPM calculation
+        const secs = elapsedSecondsRef.current;
+        const totalTokens = fullTranscript.toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
+        if (totalTokens.length > 0 && secs > 0) {
+          const wpm = Math.round((totalTokens.length / secs) * 60);
+          setSpeechPace(wpm);
+          setWpmHistory((prev) => {
+            const next = [...prev, wpm];
+            return next.length > 60 ? next.slice(-60) : next;
+          });
         }
-      }
+
+        const lastWordMatched = words.find((w) => (totalCounts[w] || 0) > (wordCounts[w] || 0));
+        if (lastWordMatched) {
+          setLastAlert(`Füllwort erkannt: „${lastWordMatched}"! Kurz innehalten & Stimme absenken.`);
+        }
+      };
 
       recognition.onstart = () => {
-        console.log('[LiveStudio] recognition.onstart — recognition is running')
-      }
+        console.log("[LiveStudio] recognition.onstart — recognition is running");
+      };
 
       recognition.onerror = (err: any) => {
-        console.error('[LiveStudio] recognition.onerror:', err.error, err.message, err)
-        // 'not-allowed' = mic permission denied
-        // 'network' = needs internet for de-DE
-        // 'aborted' = recognition was stopped
-        // 'audio-capture' = no mic found
-        // 'no-speech' = silence
-        if (err.error === 'not-allowed') {
-          setLastAlert('Mikrofon-Zugriff verweigert. Bitte erlaube den Zugriff in den Browser-Einstellungen.')
-        } else if (err.error === 'network') {
-          setLastAlert('Netzwerkfehler: Spracherkennung benötigt eine Internetverbindung.')
-        } else if (err.error !== 'no-speech' && err.error !== 'aborted') {
-          setLastAlert(`Erkennungsfehler: ${err.error}`)
+        console.error("[LiveStudio] recognition.onerror:", err.error, err.message, err);
+        if (err.error === "not-allowed") {
+          setLastAlert("Mikrofon-Zugriff verweigert. Bitte erlaube den Zugriff in den Browser-Einstellungen.");
+        } else if (err.error === "network") {
+          setLastAlert("Netzwerkfehler: Spracherkennung benötigt eine Internetverbindung.");
+        } else if (err.error !== "no-speech" && err.error !== "aborted") {
+          setLastAlert(`Erkennungsfehler: ${err.error}`);
         }
-      }
+      };
 
       recognition.onend = () => {
-        console.log('[LiveStudio] recognition.onend — restarting:', isListening)
+        console.log("[LiveStudio] recognition.onend — restarting:", isListening);
         if (isListening) {
-          try { recognition.start() } catch (restartErr) {
-            console.warn('[LiveStudio] Restart failed:', restartErr)
+          try { recognition.start(); } catch (restartErr) {
+            console.warn("[LiveStudio] Restart failed:", restartErr);
           }
         }
-      }
+      };
 
-      recognition.start()
-      console.log('[LiveStudio] recognition.start() called')
-      recognitionRef.current = recognition
-      setIsListening(true)
-      setLastAlert('Live-Erkennung aktiv. Sprich frei ins Mikrofon!')
+      recognition.start();
+      console.log("[LiveStudio] recognition.start() called");
+      recognitionRef.current = recognition;
+      setIsListening(true);
+      setLastAlert("Live-Erkennung aktiv. Sprich frei ins Mikrofon!");
     } catch (e) {
-      console.error('[LiveStudio] startListening CATCH:', e)
-      const msg = e instanceof Error ? e.message : String(e)
-      setLastAlert(`Fehler beim Starten: ${msg}`)
+      console.error("[LiveStudio] startListening CATCH:", e);
+      const msg = e instanceof Error ? e.message : String(e);
+      setLastAlert(`Fehler beim Starten: ${msg}`);
     }
-  }
+  };
 
   const stopListening = () => {
     if (recognitionRef.current) {
-      recognitionRef.current.stop()
-      recognitionRef.current = null
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
     }
-    stopVisualizer()
-    setIsListening(false)
-  }
+    stopVisualizer();
+    setIsListening(false);
+  };
 
   const resetLiveSession = () => {
-    stopListening()
-    setLiveCount(0)
-    setWordCounts({})
-    setLiveTranscript('')
-    setLastAlert(null)
-    setElapsedSeconds(0)
-    setSpeechPace(0)
-    setWpmHistory([])
-    setIsAmbientAlert(false)
-    finalFillerCountsRef.current = {}
-    lastInterimRef.current = ''
-    particlesRef.current = []
-    const ctx = particleCanvasRef.current?.getContext('2d')
-    if (ctx && particleCanvasRef.current) ctx.clearRect(0, 0, particleCanvasRef.current.width, particleCanvasRef.current.height)
-  }
+    stopListening();
+    setLiveCount(0);
+    setWordCounts({});
+    setLiveTranscript("");
+    setLastAlert(null);
+    setElapsedSeconds(0);
+    setSpeechPace(0);
+    setWpmHistory([]);
+    setIsAmbientAlert(false);
+    segmentFillersRef.current.clear();
+    particlesRef.current = [];
+    const ctx = particleCanvasRef.current?.getContext("2d");
+    if (ctx && particleCanvasRef.current) ctx.clearRect(0, 0, particleCanvasRef.current.width, particleCanvasRef.current.height);
+  };
 
   return (
     <section className="live-studio-view">
@@ -2170,20 +2155,20 @@ function LiveStudio({ words }: { words: string[] }) {
           <p className="intro-copy">Sprich frei ins Mikrofon. Füllwörter werden live gezählt, dein Ton als Wave visualisiert & dein Tempo getracked.</p>
         </div>
         <div className="live-header-status-badge">
-          <span className={isListening ? 'live-mic-dot recording' : 'live-mic-dot'} />
-          <b>{isListening ? 'LIVE-ERKENNUNG AKTIV' : 'BEREIT'}</b>
+          <span className={isListening ? "live-mic-dot recording" : "live-mic-dot"} />
+          <b>{isListening ? "LIVE-ERKENNUNG AKTIV" : "BEREIT"}</b>
         </div>
       </div>
 
       <div className="live-studio-grid">
         <div className="live-studio-panel left-panel">
-          <div className={`live-counter-box${isAmbientAlert ? ' ambient-alert' : ''}`}>
+          <div className={`live-counter-box${isAmbientAlert ? " ambient-alert" : ""}`}>
             <img src="/logo.png" alt="ähzähler Logo" className="live-logo-badge" />
 
             {/* Particle canvas overlay */}
             <div className="particle-canvas-wrap">
               <div className="flip-counter-display">
-                <span ref={counterRef} className="flip-counter-number">{String(liveCount).padStart(2, '0')}</span>
+                <span ref={counterRef} className="flip-counter-number">{String(liveCount).padStart(2, "0")}</span>
               </div>
               <canvas ref={particleCanvasRef} width={200} height={120} className="particle-canvas" />
             </div>
@@ -2194,8 +2179,8 @@ function LiveStudio({ words }: { words: string[] }) {
             </div>
 
             <div className="live-status-indicator">
-              <span className={isListening ? 'live-mic-dot recording' : 'live-mic-dot'} />
-              <span>{isListening ? 'Mikrofon aktiv · Stimmsignal wird verarbeitet' : 'Mikrofon im Standby'}</span>
+              <span className={isListening ? "live-mic-dot recording" : "live-mic-dot"} />
+              <span>{isListening ? "Mikrofon aktiv · Stimmsignal wird verarbeitet" : "Mikrofon im Standby"}</span>
             </div>
           </div>
 
@@ -2234,37 +2219,53 @@ function LiveStudio({ words }: { words: string[] }) {
             </div>
             <div className="live-stat-card">
               <b>Sprechtempo</b>
-              <strong>{speechPace} <span style={{ fontSize: '13px', fontWeight: 400 }}>WPM</span></strong>
+              <strong>{speechPace} <span style={{ fontSize: "13px", fontWeight: 400 }}>WPM</span></strong>
             </div>
           </div>
 
           {/* WPM Rolling Chart */}
           <div className="wpm-chart-box">
             <div className="wpm-chart-label">📈 Sprechtempo-Verlauf (letzte 60 Sek.)</div>
-            <canvas ref={wpmCanvasRef} width={460} height={80} className="wpm-chart-canvas" />
+            <canvas ref={wpmCanvasRef} width={460} height={70} className="wpm-chart-canvas" />
             {wpmHistory.length < 2 && (
               <div className="wpm-chart-hint">Sprich ins Mikrofon — der Tempo-Graph erscheint hier in Echtzeit</div>
             )}
           </div>
 
-          <div className="breakdown" style={{ marginTop: '10px' }}>
-            {words.map((word) => (
-              <div key={word}>
-                <b>„{word}"</b>
-                <strong>{wordCounts[word] || 0}</strong>
-                <span>Treffer</span>
-              </div>
-            ))}
+          {/* Live Transcript Box - Front & Center */}
+          <div className="live-transcript-box" ref={transcriptBoxRef}>
+            <div className="live-transcript-header">
+              <span className="live-transcript-title">🎙️ Live Transkript-Stream</span>
+              <span className="live-transcript-wordcount">
+                {liveTranscript ? `${(liveTranscript.match(/[\p{L}\p{N}]+/gu) || []).length} Wörter erfasst` : "Warten auf Sprache..."}
+              </span>
+            </div>
+            <p className="transcript-text">
+              {liveTranscript || (
+                <span className="transcript-placeholder">
+                  {isListening ? '🎙️ Spracherkennung lauscht... Sprich frei drauflos!' : 'Noch keine Sprache erfasst. Klicke links auf „Live-Session starten“ und sprich ins Mikrofon.'}
+                </span>
+              )}
+            </p>
           </div>
 
-          <div className="live-transcript-box" ref={transcriptBoxRef}>
-            <div className="section-label">Live Transkript-Stream</div>
-            <p className="transcript-text">{liveTranscript || 'Noch keine Sprache erfasst. Klicke auf „Live-Session starten" und sprich ins Mikrofon.'}</p>
+          {/* Search Words Breakdown */}
+          <div className="live-breakdown-section">
+            <div className="live-breakdown-title">FÜLLWORT-AUFSCHLÜSSELUNG</div>
+            <div className="breakdown">
+              {words.map((word) => (
+                <div key={word} className={(wordCounts[word] || 0) > 0 ? "breakdown-item active-hit" : "breakdown-item"}>
+                  <b>„{word}"</b>
+                  <strong>{wordCounts[word] || 0}</strong>
+                  <span>Treffer</span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </div>
     </section>
-  )
+  );
 }
 
-export default App
+export default App;
