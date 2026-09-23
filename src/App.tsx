@@ -650,7 +650,11 @@ function App() {
         return
       }
       console.error('[Analyze] Catch error:', requestError)
-      setError(requestError instanceof Error ? requestError.message : 'Analyse fehlgeschlagen.')
+      let errorMsg = requestError instanceof Error ? requestError.message : 'Analyse fehlgeschlagen.'
+      if (errorMsg.includes('Netzwerkverbindung wurde unterbrochen') || errorMsg.includes('network connection') || errorMsg.includes('Load failed') || errorMsg.includes('Failed to fetch')) {
+        errorMsg = 'Netzwerkverbindung unterbrochen: Der Server hat die Verbindung während der Verarbeitung geschlossen. Prüfe die Server-Logs mit "journalctl -u aehm-zaehler -f" oder Nginx "proxy_read_timeout".'
+      }
+      setError(errorMsg)
       setProgress({ percent: 0, step: 0, label: 'Fehler', remainingSeconds: 0 })
     } finally {
       setIsAnalyzing(false)

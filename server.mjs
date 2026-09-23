@@ -342,7 +342,10 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
     console.error('[analyze] FEHLER:', message)
     console.error('[analyze] STACK:', stack)
     sendEvent({ type: 'error', error: message })
-    return response.end()
+    setTimeout(() => {
+      try { response.end() } catch {}
+    }, 150)
+    return
   } finally {
     if (heartbeat) clearInterval(heartbeat)
     if (typeof temporaryDirectory === 'string') await rm(temporaryDirectory, { recursive: true, force: true })
