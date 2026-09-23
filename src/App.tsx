@@ -856,15 +856,36 @@ function App() {
             <div className={result ? 'panel result-panel revealed' : 'panel result-panel'}>
               <div className="panel-heading">
                 <div><span className="step">02</span><h2>Dein Ergebnis</h2></div>
-                <span className="live-dot">● {isAnalyzing ? 'Analysiert live …' : result ? 'Fertig' : 'Bereit'}</span>
+                <span className={`live-dot ${isAnalyzing ? 'is-active-dot' : ''}`}>
+                  {isAnalyzing ? '● Live-Analyse läuft…' : result ? '● Abgeschlossen' : '● Bereit'}
+                </span>
               </div>
 
               {!result ? (
                 isAnalyzing ? (
-                  <div className="empty-result">
-                    <div className="waveform active"><span /><span /><span /><span /><span /><span /><span /></div>
-                    <p>Analyse läuft …</p>
-                    <small>{progress.label || 'Audio wird verarbeitet. Erste Erkennungen erscheinen gleich live hier.'}</small>
+                  <div className="analyzing-live-hero">
+                    <div className="live-status-pill">
+                      <span className="live-pulse-beacon"></span>
+                      <span>KI-ANALYSE LÄUFT LIVE</span>
+                    </div>
+                    <div className="waveform-equalizer active">
+                      <span /><span /><span /><span /><span /><span /><span /><span /><span /><span /><span />
+                    </div>
+                    <div className="analyzing-stage-title">
+                      {progress.label || 'Whisper KI transkribiert Audio…'}
+                    </div>
+                    <div className="analyzing-progress-bar-wrap">
+                      <div className="analyzing-progress-bar" style={{ width: `${Math.max(8, progress.percent)}%` }}></div>
+                    </div>
+                    <div className="analyzing-submeta">
+                      <span>Fortschritt: <strong>{Math.round(progress.percent)}%</strong></span>
+                      {progress.remainingSeconds !== null && progress.remainingSeconds > 0 && (
+                        <span>Restzeit: ca. <strong>{progress.remainingSeconds}s</strong></span>
+                      )}
+                    </div>
+                    <p className="analyzing-hint">
+                      ✨ Wörter und Füllwörter werden in Echtzeit erkannt und erscheinen gleich direkt in diesem Dashboard.
+                    </p>
                   </div>
                 ) : (
                   <div className="empty-result">
@@ -875,17 +896,55 @@ function App() {
                 )
               ) : (
                 <div className="result-content">
+                  {isAnalyzing ? (
+                    <div className="live-running-banner">
+                      <div className="live-running-header">
+                        <span className="live-pulse-beacon"></span>
+                        <strong>LIVE-TRANSKRIPTION AKTIV ({Math.round(progress.percent)}%)</strong>
+                        <span className="live-badge-tag">Wächst live</span>
+                      </div>
+                      <div className="live-running-stats">
+                        <span>🎙️ <strong>{result.totalWords}</strong> Wörter bisher</span>
+                        <span>🚨 <strong>{result.fillerWords}</strong> Füllwörter</span>
+                        {progress.remainingSeconds !== null && progress.remainingSeconds > 0 && (
+                          <span>⏳ ca. <strong>{progress.remainingSeconds}s</strong> verbleibend</span>
+                        )}
+                      </div>
+                      <div className="live-running-progress-track">
+                        <div className="live-running-progress-fill" style={{ width: `${Math.max(5, progress.percent)}%` }}></div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="complete-banner">
+                      <div className="complete-badge-content">
+                        <span className="complete-badge-icon">✓</span>
+                        <div>
+                          <strong>Analyse erfolgreich abgeschlossen</strong>
+                          <span className="complete-badge-sub">
+                            {result.totalWords} gesprochene Wörter • {formatTimestamp(result.duration)} Min. • {result.fillerWords} Füllwörter ({((result.relativeRate || 0) * 100).toFixed(1)}%)
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="result-source">
                     <div className="source-headline">
                       <span>Video / Quelle</span>
-                      <span className="source-tag">{isAnalyzing ? '⚡ Live-Erkennung' : 'Analyse fertig'}</span>
+                      <span className={`source-tag ${isAnalyzing ? 'source-tag-live' : ''}`}>
+                        {isAnalyzing ? '⚡ Live-Zählung aktiv' : 'Fertig analysiert'}
+                      </span>
                     </div>
                     <strong>{activeSourceLabel || url || file?.name || 'YouTube Video'}</strong>
                   </div>
 
                   <div className="main-count">
-                    <strong>{result.fillerWords}</strong>
-                    <span>Füllwörter gesamt<br /><small>(bereinigt: {result.baseFillerWords ?? result.fillerWords})</small></span>
+                    <strong className={isAnalyzing ? 'count-pulsing' : ''}>{result.fillerWords}</strong>
+                    <span>
+                      Füllwörter gesamt {isAnalyzing && <span className="live-pill-inline">LIVE</span>}
+                      <br />
+                      <small>(bereinigt: {result.baseFillerWords ?? result.fillerWords})</small>
+                    </span>
                   </div>
 
                   <div className="metrics">
