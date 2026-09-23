@@ -680,12 +680,12 @@ function App() {
 
     if (direction === 'next') {
       const nextIndex = fillerSegments.findIndex((seg) => seg.start > currentTime + 0.3)
-      const idx = nextIndex !== -1 ? nextIndex : 0
+      const idx = nextIndex !== -1 ? nextIndex : fillerSegments.length - 1
       setSupercutCurrentIndex(idx)
       seekAndPlay(Math.max(0, fillerSegments[idx].start - 0.1))
     } else {
-      const prevSegs = fillerSegments.filter((seg) => seg.start < currentTime - 0.5)
-      const idx = prevSegs.length ? fillerSegments.indexOf(prevSegs[prevSegs.length - 1]) : fillerSegments.length - 1
+      const prevSegs = fillerSegments.filter((seg) => seg.start < currentTime - 0.3)
+      const idx = prevSegs.length ? fillerSegments.indexOf(prevSegs[prevSegs.length - 1]) : 0
       setSupercutCurrentIndex(idx)
       seekAndPlay(Math.max(0, fillerSegments[idx].start - 0.1))
     }
@@ -703,11 +703,11 @@ function App() {
 
     if (direction === 'next') {
       const nextIndex = pauseSegments.findIndex((p) => p.start > currentTime + 0.3)
-      const idx = nextIndex !== -1 ? nextIndex : 0
+      const idx = nextIndex !== -1 ? nextIndex : pauseSegments.length - 1
       seekAndPlay(Math.max(0, pauseSegments[idx].start))
     } else {
-      const prevPauses = pauseSegments.filter((p) => p.start < currentTime - 0.5)
-      const idx = prevPauses.length ? pauseSegments.indexOf(prevPauses[prevPauses.length - 1]) : pauseSegments.length - 1
+      const prevPauses = pauseSegments.filter((p) => p.start < currentTime - 0.3)
+      const idx = prevPauses.length ? pauseSegments.indexOf(prevPauses[prevPauses.length - 1]) : 0
       seekAndPlay(Math.max(0, pauseSegments[idx].start))
     }
   }
@@ -2506,7 +2506,7 @@ ${advice.summary}
                             type="button"
                             className="player-control-button"
                             onClick={() => jumpToFiller('prev')}
-                            disabled={!fillerSegments.length}
+                            disabled={!fillerSegments.length || currentFillerIndex <= 0}
                             title="Tastenkürzel: Alt + Pfeil links"
                           >
                             ⏮️ Vorheriges
@@ -2518,7 +2518,7 @@ ${advice.summary}
                             type="button"
                             className="player-control-button"
                             onClick={() => jumpToFiller('next')}
-                            disabled={!fillerSegments.length}
+                            disabled={!fillerSegments.length || (currentFillerIndex >= fillerSegments.length - 1 && currentFillerIndex !== -1)}
                             title="Tastenkürzel: Alt + Pfeil rechts"
                           >
                             Nächstes ⏭️
@@ -2534,7 +2534,7 @@ ${advice.summary}
                               type="button"
                               className="player-control-button pause-btn"
                               onClick={() => jumpToPause('prev')}
-                              disabled={!pauseSegments.length}
+                              disabled={!pauseSegments.length || currentPauseIndex <= 0}
                               title="Tastenkürzel: Alt + Pfeil hoch"
                             >
                               ⏮️ Vorherige
@@ -2546,7 +2546,7 @@ ${advice.summary}
                               type="button"
                               className="player-control-button pause-btn"
                               onClick={() => jumpToPause('next')}
-                              disabled={!pauseSegments.length}
+                              disabled={!pauseSegments.length || (currentPauseIndex >= pauseSegments.length - 1 && currentPauseIndex !== -1)}
                               title="Tastenkürzel: Alt + Pfeil runter"
                             >
                               Nächste ⏭️
