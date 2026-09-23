@@ -1724,11 +1724,11 @@ h2 {
   border-radius: 10px;
   background: var(--panel);
   border: 1px solid var(--line);
-  height: 80px;
+  height: 130px;
   overflow-y: auto;
   scrollbar-width: none;
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.6;
 }
 
 .live-transcript-box::-webkit-scrollbar {

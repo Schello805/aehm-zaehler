@@ -1066,6 +1066,8 @@ function LiveStudio({ words }: { words: string[] }) {
   const particleAnimRef = useRef<number | null>(null)
   const counterRef = useRef<HTMLSpanElement | null>(null)
   const transcriptBoxRef = useRef<HTMLDivElement | null>(null)
+  // Ref for elapsedSeconds so onresult closure always has the current value (avoids stale closure, WPM=0 bug)
+  const elapsedSecondsRef = useRef(0)
   // Persistent filler counts that survive Web Speech API finalization (which strips filler words like 'äh')
   const finalFillerCountsRef = useRef<Record<string, number>>({})
   // Last interim transcript text to detect new filler words as they appear
@@ -1202,7 +1204,11 @@ function LiveStudio({ words }: { words: string[] }) {
     }
 
     timerRef.current = window.setInterval(() => {
-      setElapsedSeconds((sec) => sec + 1)
+      setElapsedSeconds((sec) => {
+        const next = sec + 1
+        elapsedSecondsRef.current = next  // keep ref in sync so onresult closure has current value
+        return next
+      })
     }, 1000)
 
 
@@ -1316,34 +1322,45 @@ function LiveStudio({ words }: { words: string[] }) {
       recognition.maxAlternatives = 3
 
       recognition.onresult = (event: any) => {
-        // Separate final from interim text
-        // The Web Speech API (de-DE) strips filler words like 'äh'/'ähm' from FINAL results.
-        // We must detect them in INTERIM results and persist the counts ourselves.
+        // Separate final from interim text.
+        // Chrome's de-DE model strips 'äh'/'ähm' from FINAL results but sometimes keeps them in INTERIM.
+        // We also scan ALL recognition alternatives (maxAlternatives=3) since 'äh' may appear in alt 1/2.
         let finalText = ''
         let interimText = ''
+        // All alternative texts combined — for filler scanning only
+        let allAlternativeText = ''
 
         for (let i = 0; i < event.results.length; i++) {
           if (event.results[i].isFinal) {
             finalText += event.results[i][0].transcript + ' '
+            // Collect all alternatives for filler detection
+            for (let alt = 0; alt < event.results[i].length; alt++) {
+              allAlternativeText += event.results[i][alt].transcript + ' '
+            }
           } else {
             interimText += event.results[i][0].transcript
+            // Collect all alternatives of interim results too
+            for (let alt = 0; alt < event.results[i].length; alt++) {
+              allAlternativeText += event.results[i][alt].transcript + ' '
+            }
           }
         }
 
-        // 🔍 DEBUG LOGGING — sichtbar in Browser DevTools (F12 → Console)
+        // 🔍 DEBUG LOGGING
         console.log('[LiveStudio] resultIndex:', event.resultIndex, 'isFinal:', event.results[event.resultIndex]?.isFinal)
         console.log('[LiveStudio] interimText:', JSON.stringify(interimText))
-        console.log('[LiveStudio] finalText (last 100):', finalText.slice(-100))
+        console.log('[LiveStudio] allAlts (first 200):', allAlternativeText.slice(0, 200))
         console.log('[LiveStudio] words being searched:', words)
 
         // Display: final + current interim
         const displayText = finalText + interimText
         setLiveTranscript(displayText)
 
-        // WPM is computed from total word count
+        // WPM — use elapsedSecondsRef.current (NOT the stale state variable from closure!)
+        const secs = elapsedSecondsRef.current
         const totalTokens = displayText.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []
-        if (totalTokens.length > 0 && elapsedSeconds > 0) {
-          const wpm = Math.round((totalTokens.length / elapsedSeconds) * 60)
+        if (totalTokens.length > 0 && secs > 0) {
+          const wpm = Math.round((totalTokens.length / secs) * 60)
           setSpeechPace(wpm)
           setWpmHistory((prev) => {
             const next = [...prev, wpm]
@@ -1351,29 +1368,55 @@ function LiveStudio({ words }: { words: string[] }) {
           })
         }
 
-        // Helper: count filler words in any text segment
+        // Phonetic variants: Chrome's German model sometimes outputs 'ä' instead of 'äh',
+        // or 'ah' (romanized). We expand each search word to include common variants.
+        const getVariants = (word: string): string[] => {
+          const w = word.toLowerCase().trim()
+          if (w === 'äh')  return ['äh', 'ä', 'ah', 'ähh', 'ähhh', 'a']
+          if (w === 'ähm') return ['ähm', 'äh', 'ähm', 'aam', 'hm', 'hmm', 'hmmm']
+          return [w]
+        }
+
+        // Helper: count a word (and its variants) in text
+        const countWordInText = (text: string, word: string): number => {
+          const variants = getVariants(word)
+          const toks = text.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []
+          let total = 0
+          for (const variant of variants) {
+            const vToks = variant.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []
+            if (!vToks.length) continue
+            for (let i = 0; i <= toks.length - vToks.length; i++) {
+              if (vToks.every((tok, offset) => toks[i + offset] === tok)) total++
+            }
+          }
+          // Deduplicate: don't double-count (take max occurrence from any single variant)
+          return Math.max(...variants.map(variant => {
+            const vToks = variant.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []
+            if (!vToks.length) return 0
+            let c = 0
+            for (let i = 0; i <= toks.length - vToks.length; i++) {
+              if (vToks.every((tok, offset) => toks[i + offset] === tok)) c++
+            }
+            return c
+          }))
+        }
+
         const countFillers = (text: string): Record<string, number> => {
-          const lower = text.toLowerCase()
-          const toks = lower.match(/[\p{L}\p{N}]+/gu) || []
           const result: Record<string, number> = {}
           for (const w of words) {
-            const wToks = w.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []
-            if (!wToks.length) continue
-            let count = 0
-            for (let i = 0; i <= toks.length - wToks.length; i++) {
-              if (wToks.every((tok, offset) => toks[i + offset] === tok)) count++
-            }
-            if (count > 0) result[w] = count
+            const c = countWordInText(text, w)
+            if (c > 0) result[w] = c
           }
           return result
         }
 
-        // When a result is finalized: take the max of (final text counts, last interim counts)
-        // and store permanently. This preserves 'äh' counts that the API strips on finalization.
+        // Scan BOTH interimText and allAlternativeText for maximum coverage
+        const scanText = interimText + ' ' + allAlternativeText
+
+        // When a new result finalizes: lock in the best filler count seen so far
         const hasNewFinal = event.results[event.resultIndex]?.isFinal
         if (hasNewFinal) {
-          const finalCounts = countFillers(finalText)
-          // Merge: keep the higher count (interim had fillers the final lost)
+          const finalCounts = countFillers(finalText + ' ' + allAlternativeText)
           for (const w of words) {
             const fromFinal = finalCounts[w] || 0
             const fromInterim = finalFillerCountsRef.current[w] || 0
@@ -1382,11 +1425,10 @@ function LiveStudio({ words }: { words: string[] }) {
           lastInterimRef.current = ''
         }
 
-        // Detect NEW filler words appearing in the CURRENT interim result
-        // (compared to previous interim scan) and immediately add them
-        if (interimText && interimText !== lastInterimRef.current) {
-          lastInterimRef.current = interimText
-          const interimCounts = countFillers(interimText)
+        // Update persistent counts from current interim scan
+        if (scanText.trim() && scanText !== lastInterimRef.current) {
+          lastInterimRef.current = scanText
+          const interimCounts = countFillers(scanText)
           for (const w of words) {
             const fromInterim = interimCounts[w] || 0
             const alreadyPersisted = finalFillerCountsRef.current[w] || 0
@@ -1396,17 +1438,17 @@ function LiveStudio({ words }: { words: string[] }) {
           }
         }
 
-        // Build total counts = persistent (captures interim fillers) + current interim (for live display)
-        const interimCounts = countFillers(interimText)
+        // Build total display counts
+        const currentScanCounts = countFillers(scanText)
         const totalCounts: Record<string, number> = {}
         for (const w of words) {
-          totalCounts[w] = Math.max(finalFillerCountsRef.current[w] || 0, interimCounts[w] || 0)
+          totalCounts[w] = Math.max(finalFillerCountsRef.current[w] || 0, currentScanCounts[w] || 0)
         }
         const totalFiller = Object.values(totalCounts).reduce((a, b) => a + b, 0)
 
-        console.log('[LiveStudio] interimCounts:', interimCounts)
-        console.log('[LiveStudio] finalFillerCountsRef:', { ...finalFillerCountsRef.current })
-        console.log('[LiveStudio] totalCounts:', totalCounts, '→ totalFiller:', totalFiller)
+        console.log('[LiveStudio] scanText fillers:', currentScanCounts)
+        console.log('[LiveStudio] persistent counts:', { ...finalFillerCountsRef.current })
+        console.log('[LiveStudio] totalFiller:', totalFiller)
 
         setWordCounts(totalCounts)
         setLiveCount((prev) => {
