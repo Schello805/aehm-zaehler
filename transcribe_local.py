@@ -15,11 +15,14 @@ def main() -> None:
     user_words = {w.strip() for w in hotwords_arg.split(',') if w.strip()}
     all_hotwords = ', '.join(sorted(base_hotwords.union(user_words)))
 
-    model = WhisperModel('small', device='cpu', compute_type='int8')
+    import os
+    threads = max(1, min(4, os.cpu_count() or 2))
+    model = WhisperModel('small', device='cpu', compute_type='int8', cpu_threads=threads)
     segments, info = model.transcribe(
         str(input_path),
         language='de',
-        beam_size=5,
+        beam_size=1,
+        best_of=1,
         vad_filter=False,
         word_timestamps=True,
         temperature=0,
