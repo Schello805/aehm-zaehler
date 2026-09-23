@@ -1824,13 +1824,23 @@ ${advice.summary}
           <img className="brand-logo-img" src="/logo.png" alt="ähm-zähler Logo" />
           <span className="brand-title">ähm-zähler</span>
         </button>
-        <div className="nav-actions">
-          <button className={view === 'analyse' ? 'nav-link active' : 'nav-link'} onClick={() => setView('analyse')} type="button">🎙️ Analyse</button>
+
+        <div className="nav-center-tabs">
+          <button className={view === 'analyse' ? 'nav-link active' : 'nav-link'} onClick={() => setView('analyse')} type="button">
+            🎙️ Analyse
+          </button>
           <button className={view === 'ranking' ? 'nav-link active ranking-tab-link' : 'nav-link ranking-tab-link'} onClick={() => setView('ranking')} type="button">
             🏆 Ähm-Ranking <span className="ranking-badge-pill">Top</span>
           </button>
-          <button className={view === 'live' ? 'nav-link active' : 'nav-link'} onClick={() => setView('live')} type="button">🔴 Live Studio</button>
-          <button className={view === 'settings' ? 'nav-link active' : 'nav-link'} onClick={() => setView('settings')} type="button">Settings</button>
+          <button className={view === 'live' ? 'nav-link active' : 'nav-link'} onClick={() => setView('live')} type="button">
+            🔴 Live Studio
+          </button>
+          <button className={view === 'settings' ? 'nav-link active' : 'nav-link'} onClick={() => setView('settings')} type="button">
+            ⚙️ Einstellungen
+          </button>
+        </div>
+
+        <div className="nav-actions">
           {installPrompt && (
             <button
               type="button"
@@ -1844,7 +1854,7 @@ ${advice.summary}
               }}
               title="ähm-zähler als Web-App installieren"
             >
-              📱 App installieren
+              📱 App
             </button>
           )}
           <button
@@ -1864,7 +1874,7 @@ ${advice.summary}
           >
             {darkMode ? '☀️' : '🌙'}
           </button>
-          <span className="nav-status"><i /> Analyse-Studio</span>
+          <span className="nav-status"><i /> Studio</span>
         </div>
       </nav>
 
