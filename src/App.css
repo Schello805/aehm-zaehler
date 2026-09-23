@@ -2459,20 +2459,26 @@ body { transition: background 0.35s ease, color 0.35s ease; }
   overflow: hidden;
   margin-top: 12px;
   cursor: pointer;
-  gap: 1px;
+  gap: 2px;
+  background: rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--line);
+  padding: 2px;
 }
 
 .heatmap-cell {
   flex: 1;
   min-width: 2px;
-  border-radius: 2px;
+  border-radius: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
   transition: filter 0.15s, transform 0.12s;
   transform-origin: bottom;
+  -webkit-print-color-adjust: exact !important;
+  print-color-adjust: exact !important;
 }
 
 .heatmap-cell:hover {
-  filter: brightness(1.3);
-  transform: scaleY(1.1);
+  filter: brightness(1.25);
+  transform: scaleY(1.08);
   z-index: 1;
 }
 
@@ -2497,6 +2503,8 @@ body { transition: background 0.35s ease, color 0.35s ease; }
   width: 10px;
   height: 10px;
   border-radius: 50%;
+  -webkit-print-color-adjust: exact !important;
+  print-color-adjust: exact !important;
 }
 
 /* ============================================================
@@ -2706,6 +2714,12 @@ body { transition: background 0.35s ease, color 0.35s ease; }
     margin: 1.2cm;
   }
 
+  *, *::before, *::after {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+  }
+
   body {
     background: #fff !important;
     color: #000 !important;
@@ -2767,13 +2781,64 @@ body { transition: background 0.35s ease, color 0.35s ease; }
   }
 
   .word-cloud-card,
-  .crutch-words-card,
-  .heatmap-card {
+  .crutch-words-card {
     border: 1px solid #e5e7eb !important;
     background: #fafafa !important;
     page-break-inside: avoid;
     margin-top: 10px !important;
     padding: 10px !important;
+  }
+
+  .heatmap-card {
+    border: 1px solid #d1d5db !important;
+    background: #ffffff !important;
+    page-break-inside: avoid;
+    margin-top: 10px !important;
+    padding: 12px !important;
+  }
+
+  .heatmap-strip {
+    background: #f1f5f9 !important;
+    border: 1px solid #cbd5e1 !important;
+    display: flex !important;
+    height: 38px !important;
+    padding: 2px !important;
+    gap: 2px !important;
+  }
+
+  .heatmap-cell {
+    border: 1px solid rgba(0, 0, 0, 0.12) !important;
+    min-height: 100% !important;
+    border-radius: 2px !important;
+  }
+
+  .heatmap-legend-dot {
+    border: 1px solid #94a3b8 !important;
+  }
+
+  .waveform-bar-card {
+    page-break-inside: avoid;
+    border: 1px solid #d1d5db !important;
+    background: #ffffff !important;
+    margin-top: 10px !important;
+    padding: 12px !important;
+  }
+
+  .waveform-timeline {
+    background: #f1f5f9 !important;
+    border: 1px solid #cbd5e1 !important;
+    height: 32px !important;
+  }
+
+  .timeline-track {
+    background: #94a3b8 !important;
+    height: 2px !important;
+  }
+
+  .timeline-filler-marker {
+    background: #dc2626 !important;
+    border: 1px solid #991b1b !important;
+    box-shadow: none !important;
   }
 
   .transcript-card {

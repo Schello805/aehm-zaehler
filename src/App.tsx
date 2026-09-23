@@ -1356,14 +1356,18 @@ ${advice.summary}
                         <div className="heatmap-strip" aria-label="Füllwort-Heatmap">
                           {buckets.map((bucket, i) => {
                             const intensity = bucket.count / maxBucket
-                            const hue = Math.round(120 - intensity * 120)
-                            const sat = bucket.count === 0 ? 15 : 80
-                            const light = 42 + (1 - intensity) * 22
+                            let bg = "hsl(140, 30%, 86%)"
+                            if (bucket.count > 0) {
+                              const hue = Math.round(52 - intensity * 52)
+                              const sat = Math.round(85 + intensity * 15)
+                              const light = Math.round(48 - intensity * 10)
+                              bg = `hsl(${hue}, ${sat}%, ${light}%)`
+                            }
                             return (
                               <div
                                 key={i}
                                 className="heatmap-cell"
-                                style={{ background: `hsl(${hue}, ${sat}%, ${light}%)` }}
+                                style={{ background: bg }}
                                 title={`${formatTimestamp(bucket.t0)} — ${bucket.count} Füllwort${bucket.count !== 1 ? 'er' : ''} (Klicken zum Anhören)`}
                                 onClick={() => seekAndPlay(bucket.t0)}
                               />
@@ -1371,9 +1375,9 @@ ${advice.summary}
                           })}
                         </div>
                         <div className="heatmap-legend">
-                          <span><span className="heatmap-legend-dot" style={{ background: 'hsl(120, 80%, 42%)' }} />Kein Füllwort</span>
-                          <span><span className="heatmap-legend-dot" style={{ background: 'hsl(60, 80%, 42%)' }} />Wenige</span>
-                          <span><span className="heatmap-legend-dot" style={{ background: 'hsl(0, 80%, 42%)' }} />Viele</span>
+                          <span><span className="heatmap-legend-dot" style={{ background: 'hsl(140, 30%, 86%)', border: '1px solid #94a3b8' }} />Kein Füllwort</span>
+                          <span><span className="heatmap-legend-dot" style={{ background: 'hsl(45, 90%, 50%)' }} />Wenige</span>
+                          <span><span className="heatmap-legend-dot" style={{ background: 'hsl(0, 85%, 45%)' }} />Viele</span>
                         </div>
                       </div>
                     )
