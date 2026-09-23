@@ -107,15 +107,70 @@ app.post('/api/media-info', async (request, response) => {
   }
 })
 
+const activeJobs = new Map()
+
+// Clean up old jobs every 5 minutes
+setInterval(() => {
+  const now = Date.now()
+  for (const [id, job] of activeJobs.entries()) {
+    if (now - job.updatedAt > 30 * 60 * 1000) {
+      activeJobs.delete(id)
+    }
+  }
+}, 5 * 60 * 1000)
+
+app.get('/api/analyze-status/:id', (request, response) => {
+  const id = request.params.id
+  const job = activeJobs.get(id)
+  if (!job) {
+    return response.status(404).json({ error: 'Job nicht gefunden oder abgelaufen' })
+  }
+  return response.json(job)
+})
+
+app.post('/api/analyze-cancel/:id', (request, response) => {
+  const id = request.params.id
+  const job = activeJobs.get(id)
+  if (job) {
+    job.status = 'aborted'
+    if (job.childProcess) {
+      try { job.childProcess.kill('SIGKILL') } catch {}
+    }
+  }
+  return response.json({ ok: true })
+})
+
 app.post('/api/analyze', upload.single('file'), async (request, response) => {
   let temporaryDirectory
   let childProcess = null
   let isAborted = false
   let heartbeat = null
 
+  const jobId = String(request.body.jobId || `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`)
+  const jobState = {
+    id: jobId,
+    status: 'running',
+    stage: 'download',
+    message: 'Initialisiere Analyse...',
+    percent: 5,
+    currentTime: 0,
+    duration: 0,
+    counts: {},
+    fillerWords: 0,
+    baseFillerWords: 0,
+    totalWords: 0,
+    relativeRate: 0,
+    text: '',
+    segments: [],
+    result: null,
+    error: null,
+    updatedAt: Date.now(),
+  }
+  activeJobs.set(jobId, jobState)
+
   response.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
-    'Cache-Control': 'no-cache, no-transform, no-store',
+    'Cache-Control': 'no-cache, no-transform, no-store, must-revalidate',
     'Connection': 'keep-alive',
     'X-Accel-Buffering': 'no',
   })
@@ -127,20 +182,46 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
     } catch {}
   }
 
-  // 2KB padding to force any upstream proxy (Nginx/Cloudflare) to immediately flush the stream
-  response.write(': ' + ' '.repeat(2048) + '\n\n')
-  response.write(': connected\n\n')
+  // 64KB initial burst padding to bypass any proxy buffer (Nginx/Cloudflare/Apache)
+  response.write(': ' + ' '.repeat(65536) + '\n\n')
+  response.write(`data: ${JSON.stringify({ type: 'init', jobId })}\n\n: ${' '.repeat(2048)}\n\n`)
 
   heartbeat = setInterval(() => {
     if (!response.writableEnded && !isAborted) {
       response.write(': ping ' + Date.now() + '\n\n')
     }
-  }, 2000)
+  }, 1500)
 
   const sendEvent = (data) => {
+    jobState.updatedAt = Date.now()
+    if (data.type === 'status') {
+      jobState.stage = data.stage || jobState.stage
+      jobState.message = data.message || jobState.message
+    } else if (data.type === 'progress') {
+      jobState.stage = 'transcribing'
+      jobState.percent = data.percent || jobState.percent
+      jobState.currentTime = data.currentTime || jobState.currentTime
+      jobState.duration = data.duration || jobState.duration
+      jobState.counts = data.counts || jobState.counts
+      jobState.fillerWords = data.fillerWords || jobState.fillerWords
+      jobState.baseFillerWords = data.baseFillerWords || jobState.baseFillerWords
+      jobState.totalWords = data.totalWords || jobState.totalWords
+      jobState.relativeRate = data.relativeRate || jobState.relativeRate
+      jobState.text = data.partialText || jobState.text
+      jobState.segments = data.segments || jobState.segments
+    } else if (data.type === 'complete') {
+      jobState.status = 'complete'
+      jobState.result = data.result
+      jobState.percent = 100
+      jobState.message = 'Ergebnis fertig'
+    } else if (data.type === 'error') {
+      jobState.status = 'error'
+      jobState.error = data.error
+    }
+
     if (response.writableEnded || isAborted) return
     const json = JSON.stringify(data)
-    response.write(`data: ${json}\n\n: ${' '.repeat(512)}\n\n`)
+    response.write(`data: ${json}\n\n: ${' '.repeat(2048)}\n\n`)
   }
 
   request.on('close', () => {
@@ -154,7 +235,7 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
   })
 
   try {
-    console.log('[analyze] Request received at', new Date().toISOString())
+    console.log('[analyze] Request received for job:', jobId, 'at', new Date().toISOString())
     temporaryDirectory = await mkdtemp(join(tmpdir(), 'aehmzaehler-'))
     console.log('[analyze] Temp dir:', temporaryDirectory)
 

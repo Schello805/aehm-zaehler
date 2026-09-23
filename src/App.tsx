@@ -509,11 +509,114 @@ function App() {
     setActiveHistoryId(null)
     setProgress({ percent: 5, step: 0, label: url ? 'Lade Video von YouTube...' : 'Audiodatei wird vorbereitet...', remainingSeconds: null })
 
-    console.log('[Analyze] Starting analysis...', { file: file?.name, url, words })
+    const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    console.log('[Analyze] Starting analysis with jobId:', jobId, { file: file?.name, url, words })
+
     const body = new FormData()
+    body.append('jobId', jobId)
     body.append('words', JSON.stringify(words))
     if (file) body.append('file', file)
     if (url) body.append('url', url)
+
+    let isCompleted = false
+    let pollerInterval: any = null
+
+    const handleProgressUpdate = (data: any) => {
+      if (isCompleted) return
+
+      if (data.stage || data.message) {
+        setProgress((prev) => ({
+          ...prev,
+          label: data.message || prev.label,
+          step: data.stage === 'download' ? 0 : data.stage === 'converting' ? 1 : 2,
+        }))
+      }
+
+      if (data.percent !== undefined) {
+        const remainingSeconds = data.duration && data.currentTime && data.currentTime > 0
+          ? Math.max(0, Math.round((data.duration - data.currentTime) * 1.0))
+          : null
+
+        setProgress({
+          percent: data.percent || 10,
+          step: 2,
+          label: `Whisper KI analysiert... (${Math.round(data.currentTime || 0)}s / ${Math.round(data.duration || 0)}s)`,
+          remainingSeconds,
+        })
+      }
+
+      if (data.text || (data.segments && data.segments.length > 0)) {
+        setResult({
+          text: data.text || data.partialText || '',
+          duration: data.duration || 0,
+          counts: data.counts || {},
+          fillerWords: data.fillerWords || 0,
+          baseFillerWords: data.baseFillerWords || 0,
+          totalWords: data.totalWords || 0,
+          relativeRate: data.relativeRate || 0,
+          segments: data.segments || [],
+        })
+      }
+
+      if (data.status === 'complete' || data.type === 'complete') {
+        const finalResult = data.result || {
+          text: data.text || '',
+          duration: data.duration || 0,
+          counts: data.counts || {},
+          fillerWords: data.fillerWords || 0,
+          baseFillerWords: data.baseFillerWords || 0,
+          totalWords: data.totalWords || 0,
+          relativeRate: data.relativeRate || 0,
+          segments: data.segments || [],
+        }
+
+        isCompleted = true
+        if (pollerInterval) clearInterval(pollerInterval)
+        console.log('[Analyze] Complete! Final result:', finalResult)
+        setResult(finalResult)
+        setProgress({ percent: 100, step: progressSteps.length - 1, label: 'Ergebnis fertig', remainingSeconds: 0 })
+
+        const fallbackTitle = url || file?.name || 'Unbekannte Quelle'
+        const historyEntry: HistoryEntry = {
+          id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          source: fallbackTitle,
+          sourceLabel: fallbackTitle,
+          createdAt: new Date().toISOString(),
+          result: finalResult,
+          words: [...words],
+          title: analysisTitle.trim() || fallbackTitle,
+          note: analysisNote.trim(),
+          tags: analysisTags.split(',').map((tag) => tag.trim()).filter(Boolean),
+        }
+
+        setHistory((current) => [historyEntry, ...current].slice(0, 50))
+        setActiveHistoryId(historyEntry.id)
+        setIsAnalyzing(false)
+      }
+    }
+
+    // Start background status polling in case proxy buffers or drops the SSE POST stream
+    pollerInterval = setInterval(async () => {
+      if (controller.signal.aborted || isCompleted) {
+        if (pollerInterval) clearInterval(pollerInterval)
+        return
+      }
+      try {
+        const res = await fetch(`/api/analyze-status/${jobId}`)
+        if (res.ok) {
+          const statusData = await res.json()
+          if (statusData.status === 'running') {
+            handleProgressUpdate(statusData)
+          } else if (statusData.status === 'complete') {
+            handleProgressUpdate(statusData)
+          } else if (statusData.status === 'error') {
+            if (pollerInterval) clearInterval(pollerInterval)
+            setError(statusData.error || 'Analyse fehlgeschlagen.')
+            setIsAnalyzing(false)
+          }
+        }
+      } catch {}
+    }, 800)
 
     try {
       console.log('[Analyze] Sending POST /api/analyze...')
@@ -523,23 +626,16 @@ function App() {
         signal: controller.signal,
       })
 
-      console.log('[Analyze] Response received:', {
-        status: response.status,
-        statusText: response.statusText,
-        contentType: response.headers.get('content-type'),
-      })
-
-      if (!response.ok) {
+      if (!response.ok && !isCompleted) {
         let errorMsg = `Server-Fehler (${response.status})`
         try {
           const text = await response.text()
-          console.error('[Analyze] Server error response body:', text)
           try {
             const json = JSON.parse(text)
             if (json.error) errorMsg = json.error
           } catch {
             if (text.includes('502 Bad Gateway')) {
-              errorMsg = '502 Bad Gateway: Der Serverdienst ist nicht erreichbar. Bitte auf dem Server "/opt/aehm-zaehler/update.sh" ausführen.'
+              errorMsg = '502 Bad Gateway: Der Serverdienst ist nicht erreichbar.'
             } else if (text && text.length < 300 && !text.includes('<html')) {
               errorMsg = text
             }
@@ -548,116 +644,70 @@ function App() {
         throw new Error(errorMsg)
       }
 
-      if (!response.body) {
-        throw new Error('Keine Antwortdaten vom Server erhalten.')
-      }
+      if (response.body) {
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder('utf-8')
+        let buffer = ''
 
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder('utf-8')
-      let buffer = ''
-      let streamFinished = false
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop() || ''
 
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
+          for (const line of lines) {
+            const trimmed = line.trim()
+            if (!trimmed || trimmed.startsWith(':')) continue
+            if (!trimmed.startsWith('data:')) continue
+            const payload = trimmed.replace(/^data:\s*/, '')
+            if (!payload) continue
 
-        for (const line of lines) {
-          const trimmed = line.trim()
-          if (!trimmed || trimmed.startsWith(':')) continue // Ignore keepalive pings
-          if (!trimmed.startsWith('data:')) continue
-          const payload = trimmed.replace(/^data:\s*/, '')
-          if (!payload) continue
-
-          let event: any
-          try {
-            event = JSON.parse(payload)
-          } catch (e) {
-            console.warn('[Analyze] Could not parse SSE line:', payload, e)
-            continue
-          }
-
-          console.log('[Analyze] SSE Event:', event.type, event)
-
-          if (event.type === 'status') {
-            setProgress((prev) => ({
-              ...prev,
-              label: event.message || prev.label,
-              step: event.stage === 'download' ? 0 : event.stage === 'converting' ? 1 : 2,
-            }))
-          } else if (event.type === 'progress') {
-            const remainingSeconds = event.duration && event.currentTime && event.currentTime > 0
-              ? Math.max(0, Math.round((event.duration - event.currentTime) * 1.0))
-              : null
-
-            setProgress({
-              percent: event.percent || 10,
-              step: 2,
-              label: `Whisper KI analysiert... (${Math.round(event.currentTime || 0)}s / ${Math.round(event.duration || 0)}s)`,
-              remainingSeconds,
-            })
-
-            // Live progressive result update
-            setResult({
-              text: event.partialText || '',
-              duration: event.duration || 0,
-              counts: event.counts || {},
-              fillerWords: event.fillerWords || 0,
-              baseFillerWords: event.baseFillerWords || 0,
-              totalWords: event.totalWords || 0,
-              relativeRate: event.relativeRate || 0,
-              segments: event.segments || [],
-            })
-          } else if (event.type === 'complete') {
-            streamFinished = true
-            const finalResult = event.result
-            console.log('[Analyze] Complete! Final result:', finalResult)
-            setResult(finalResult)
-            setProgress({ percent: 100, step: progressSteps.length - 1, label: 'Ergebnis fertig', remainingSeconds: 0 })
-
-            const fallbackTitle = url || file?.name || 'Unbekannte Quelle'
-            const historyEntry: HistoryEntry = {
-              id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-              source: fallbackTitle,
-              sourceLabel: fallbackTitle,
-              createdAt: new Date().toISOString(),
-              result: finalResult,
-              words: [...words],
-              title: analysisTitle.trim() || fallbackTitle,
-              note: analysisNote.trim(),
-              tags: analysisTags.split(',').map((tag) => tag.trim()).filter(Boolean),
+            let event: any
+            try {
+              event = JSON.parse(payload)
+            } catch {
+              continue
             }
 
-            setHistory((current) => [historyEntry, ...current].slice(0, 50))
-            setActiveHistoryId(historyEntry.id)
-          } else if (event.type === 'error') {
-            console.error('[Analyze] Server returned error event:', event.error)
-            throw new Error(event.error || 'Analyse fehlgeschlagen.')
+            if (event.type === 'status') {
+              handleProgressUpdate(event)
+            } else if (event.type === 'progress') {
+              handleProgressUpdate(event)
+            } else if (event.type === 'complete') {
+              handleProgressUpdate(event)
+            } else if (event.type === 'error') {
+              throw new Error(event.error || 'Analyse fehlgeschlagen.')
+            }
           }
         }
-      }
-
-      if (!streamFinished && !controller.signal.aborted) {
-        setProgress((prev) => ({ ...prev, percent: 100, label: 'Analyse abgeschlossen' }))
       }
     } catch (requestError) {
       if (requestError instanceof DOMException && requestError.name === 'AbortError') {
         console.log('[Analyze] User aborted analysis.')
+        if (pollerInterval) clearInterval(pollerInterval)
+        try { fetch(`/api/analyze-cancel/${jobId}`, { method: 'POST' }).catch(() => {}) } catch {}
         setProgress({ percent: 0, step: 0, label: 'Analyse abgebrochen', remainingSeconds: null })
+        setIsAnalyzing(false)
         return
       }
-      console.error('[Analyze] Catch error:', requestError)
-      let errorMsg = requestError instanceof Error ? requestError.message : 'Analyse fehlgeschlagen.'
-      if (errorMsg.includes('Netzwerkverbindung wurde unterbrochen') || errorMsg.includes('network connection') || errorMsg.includes('Load failed') || errorMsg.includes('Failed to fetch')) {
-        errorMsg = 'Netzwerkverbindung unterbrochen: Der Server hat die Verbindung während der Verarbeitung geschlossen. Prüfe die Server-Logs mit "journalctl -u aehm-zaehler -f" oder Nginx "proxy_read_timeout".'
-      }
-      setError(errorMsg)
-      setProgress({ percent: 0, step: 0, label: 'Fehler', remainingSeconds: 0 })
+
+      // If already marked completed by poller, ignore fetch closure errors
+      if (isCompleted) return
+
+      console.warn('[Analyze] SSE stream error or closed, polling will continue:', requestError)
+      // Wait up to 3 seconds to see if poller gets final status
+      setTimeout(() => {
+        if (!isCompleted && pollerInterval) {
+          clearInterval(pollerInterval)
+          let errorMsg = requestError instanceof Error ? requestError.message : 'Analyse fehlgeschlagen.'
+          setError(errorMsg)
+          setProgress({ percent: 0, step: 0, label: 'Fehler', remainingSeconds: 0 })
+          setIsAnalyzing(false)
+        }
+      }, 5000)
     } finally {
-      setIsAnalyzing(false)
       analysisControllerRef.current = null
     }
   }
