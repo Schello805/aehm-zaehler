@@ -584,7 +584,37 @@ ${advice.summary}
     let isCancelled = false
     setIsFetchingMediaInfo(true)
 
-    const timer = setTimeout(async () => {
+    const isYouTube = /(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))([\w-]{11})/i.test(trimmed)
+
+    const fetchInfo = async () => {
+      let resolvedTitle = ''
+      let resolvedUploader = ''
+
+      // 1. Fast direct client-side oEmbed for YouTube (instant 50ms)
+      if (isYouTube) {
+        try {
+          const oeRes = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(trimmed)}&format=json`)
+          if (oeRes.ok) {
+            const oeData = await oeRes.json()
+            if (oeData?.title) {
+              resolvedTitle = oeData.title
+              resolvedUploader = oeData.author_name || ''
+              if (!isCancelled) {
+                setFetchedMediaInfo({
+                  title: resolvedTitle,
+                  uploader: resolvedUploader,
+                  duration: 0,
+                })
+                setAnalysisTitle((prev) => prev ? prev : resolvedTitle)
+              }
+            }
+          }
+        } catch (oeErr) {
+          console.warn('oEmbed client fetch note:', oeErr)
+        }
+      }
+
+      // 2. Fetch duration and backend fallback metadata
       try {
         const res = await fetch('/api/media-info', {
           method: 'POST',
@@ -593,21 +623,29 @@ ${advice.summary}
         })
         if (res.ok && !isCancelled) {
           const data = await res.json()
-          if (data?.title) {
+          const finalTitle = data.title || resolvedTitle
+          const finalUploader = data.uploader || resolvedUploader
+          const finalDuration = Number(data.duration || 0)
+
+          if (finalTitle || finalDuration > 0) {
             setFetchedMediaInfo({
-              title: data.title,
-              duration: data.duration || 0,
-              uploader: data.uploader || '',
+              title: finalTitle || 'YouTube Video',
+              duration: finalDuration,
+              uploader: finalUploader,
             })
-            if (!analysisTitle) {
-              setAnalysisTitle(data.title)
+            if (finalTitle) {
+              setAnalysisTitle((prev) => prev ? prev : finalTitle)
             }
           }
         }
-      } catch {} finally {
+      } catch (srvErr) {
+        console.warn('Server media-info fetch note:', srvErr)
+      } finally {
         if (!isCancelled) setIsFetchingMediaInfo(false)
       }
-    }, 400)
+    }
+
+    const timer = setTimeout(fetchInfo, 150)
 
     return () => {
       isCancelled = true

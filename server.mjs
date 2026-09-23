@@ -79,16 +79,49 @@ const getUrlMetadata = async (url) => {
   if (!isValidHttpUrl(url)) {
     throw new Error('Ungültige oder nicht erlaubte URL.')
   }
-  const metadata = await youtubedl(url, {
-    ...commonYtDlpOptions,
-    dumpSingleJson: true,
-    noDownload: true,
-  }, { timeout: 2 * 60 * 1000 })
+
+  let title = ''
+  let uploader = ''
+  let duration = 0
+  let thumbnail = ''
+
+  // Fast oEmbed for YouTube
+  if (/(?:youtu\.be\/|youtube\.com\/)/i.test(url)) {
+    try {
+      const oeRes = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`)
+      if (oeRes.ok) {
+        const oeData = await oeRes.json()
+        if (oeData?.title) {
+          title = oeData.title
+          uploader = oeData.author_name || ''
+          thumbnail = oeData.thumbnail_url || ''
+        }
+      }
+    } catch (oeErr) {
+      console.warn('[metadata] oembed fetch error:', oeErr?.message)
+    }
+  }
+
+  try {
+    const metadata = await youtubedl(url, {
+      ...commonYtDlpOptions,
+      dumpSingleJson: true,
+      noDownload: true,
+    }, { timeout: 2 * 60 * 1000 })
+
+    duration = Number(metadata.duration || 0)
+    if (!title) title = String(metadata.title || '').trim()
+    if (!uploader) uploader = String(metadata.uploader || metadata.channel || '').trim()
+    if (!thumbnail) thumbnail = String(metadata.thumbnail || '').trim()
+  } catch (ytErr) {
+    console.warn('[metadata] yt-dlp note:', ytErr?.message)
+  }
+
   return {
-    duration: Number(metadata.duration || 0),
-    title: String(metadata.title || '').trim(),
-    uploader: String(metadata.uploader || metadata.channel || '').trim(),
-    thumbnail: String(metadata.thumbnail || '').trim(),
+    duration,
+    title,
+    uploader,
+    thumbnail,
   }
 }
 
