@@ -605,7 +605,7 @@ function App() {
         const res = await fetch(`/api/analyze-status/${jobId}`)
         if (res.ok) {
           const statusData = await res.json()
-          if (statusData.status === 'running') {
+          if (statusData.status === 'running' || statusData.status === 'initializing') {
             handleProgressUpdate(statusData)
           } else if (statusData.status === 'complete') {
             handleProgressUpdate(statusData)

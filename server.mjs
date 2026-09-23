@@ -123,7 +123,15 @@ app.get('/api/analyze-status/:id', (request, response) => {
   const id = request.params.id
   const job = activeJobs.get(id)
   if (!job) {
-    return response.status(404).json({ error: 'Job nicht gefunden oder abgelaufen' })
+    return response.json({
+      id,
+      status: 'initializing',
+      stage: 'init',
+      message: 'Initialisiere Analyse...',
+      percent: 5,
+      segments: [],
+      counts: {},
+    })
   }
   return response.json(job)
 })
