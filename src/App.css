@@ -985,13 +985,31 @@ h2 {
   width: 3px;
   height: 19px;
   background: var(--line);
+  border-radius: 2px;
+  transition: all 0.3s ease;
+}
+
+.waveform.active span {
+  background: var(--primary, #3b82f6);
+  animation: wavePulse 1.2s ease-in-out infinite;
 }
 
 .waveform span:nth-child(2),
-.waveform span:nth-child(6) { height: 31px; }
+.waveform span:nth-child(6) { height: 31px; animation-delay: 0.15s; }
 .waveform span:nth-child(3),
-.waveform span:nth-child(5) { height: 40px; }
-.waveform span:nth-child(4) { height: 24px; }
+.waveform span:nth-child(5) { height: 40px; animation-delay: 0.3s; }
+.waveform span:nth-child(4) { height: 24px; animation-delay: 0.45s; }
+
+@keyframes wavePulse {
+  0%, 100% {
+    transform: scaleY(0.4);
+    opacity: 0.5;
+  }
+  50% {
+    transform: scaleY(1.1);
+    opacity: 1;
+  }
+}
 
 .history-section {
   padding-bottom: 32px;

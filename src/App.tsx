@@ -616,11 +616,19 @@ function App() {
               </div>
 
               {!result ? (
-                <div className="empty-result">
-                  <div className="waveform"><span /><span /><span /><span /><span /><span /><span /></div>
-                  <p>Dein Ergebnis erscheint hier</p>
-                  <small>Starte eine Analyse, um deinen Sprechfluss zu sehen.</small>
-                </div>
+                isAnalyzing ? (
+                  <div className="empty-result">
+                    <div className="waveform active"><span /><span /><span /><span /><span /><span /><span /></div>
+                    <p>Analyse läuft …</p>
+                    <small>{progress.label || 'Audio wird verarbeitet. Erste Erkennungen erscheinen gleich live hier.'}</small>
+                  </div>
+                ) : (
+                  <div className="empty-result">
+                    <div className="waveform"><span /><span /><span /><span /><span /><span /><span /></div>
+                    <p>Bereit für die Analyse</p>
+                    <small>Lade eine Aufnahme hoch oder füge einen Link ein und starte die Analyse.</small>
+                  </div>
+                )
               ) : (
                 <div className="result-content">
                   <div className="result-source">
