@@ -2697,6 +2697,18 @@ body { transition: background 0.35s ease, color 0.35s ease; }
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
 }
 
+.report-btn-comment {
+  background: rgba(234, 88, 12, 0.1);
+  border-color: rgba(234, 88, 12, 0.35);
+  color: #c2410c;
+  font-weight: 700;
+}
+
+.report-btn-comment:hover {
+  background: rgba(234, 88, 12, 0.18);
+  border-color: #ea580c;
+}
+
 .report-btn-copy {
   background: rgba(199, 91, 71, 0.08);
   border-color: rgba(199, 91, 71, 0.25);
@@ -2738,6 +2750,12 @@ body { transition: background 0.35s ease, color 0.35s ease; }
 
 :root[data-theme="dark"] .report-btn:hover {
   background: rgba(255, 255, 255, 0.12);
+}
+
+:root[data-theme="dark"] .report-btn-comment {
+  background: rgba(234, 88, 12, 0.22);
+  border-color: rgba(234, 88, 12, 0.45);
+  color: #fb923c;
 }
 
 :root[data-theme="dark"] .report-btn-copy {

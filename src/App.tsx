@@ -169,7 +169,7 @@ function App() {
   const playbackRef = useRef<HTMLAudioElement>(null)
   const analysisControllerRef = useRef<AbortController | null>(null)
   const currentJobIdRef = useRef<string | null>(null)
-  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied'>('idle')
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'copied-comment'>('idle')
   const playbackUrl = useMemo(() => (file ? URL.createObjectURL(file) : ''), [file])
 
   const activeSourceUrl = useMemo(() => {
@@ -373,6 +373,41 @@ function App() {
 
   const printPdfReport = () => {
     window.print()
+  }
+
+  const copyFeedbackComment = () => {
+    if (!result) return
+    const topWords = Object.entries(result.counts || {})
+      .filter(([, count]) => count > 0)
+      .sort(([, a], [, b]) => b - a)
+      .slice(0, 5)
+      .map(([w, c]) => `• „${w}“: ${c}×`)
+      .join('\n')
+
+    const effectiveFillers = result.baseFillerWords ?? result.fillerWords
+    const ratePerMin = result.duration > 0 ? (effectiveFillers / (result.duration / 60)) : 0
+
+    const commentText = `Hallo, das Format ist super und ich schätze eure Inhalte und Themen sehr! Ich würde die Videos gerne voll aufsaugen, allerdings lenken mich häufige Füllwörter wie „äh“ und „ähm“ leider stark vom eigentlichen Inhalt ab.
+
+Ich möchte hier rein konstruktives Feedback dalassen, ohne jemanden verletzen oder angreifen zu wollen. Vor einiger Zeit habe ich bei einem Rhetorik-Seminar gelernt, aktiv auf Füllwörter zu achten – seitdem fallen sie mir beim Zuhören leider extrem auf.
+
+Um das Ganze objektiv und greifbar zu machen, habe ich ein Analysetool („ähm-zähler“) gebaut. Hier ist die Auswertung für dieses Video:
+
+⏱️ Dauer: ${formatTimestamp(result.duration)} Min.
+🗣️ Wörter gesamt: ${result.totalWords.toLocaleString('de-DE')}
+🚨 Füllwörter gesamt: ${result.fillerWords} (${((result.relativeRate || 0) * 100).toLocaleString('de-DE', { maximumFractionDigits: 1 })} % — ca. ${ratePerMin.toLocaleString('de-DE', { maximumFractionDigits: 1 })} Füllwörter/Min.)
+
+🔍 Häufigste Füllwörter:
+${topWords || '• Keine Füllwörter gefunden'}
+
+Vielleicht hilft euch das Feedback dabei, den Sprechfluss noch weiter zu verfeinern, damit die starken Inhalte noch besser zur Geltung kommen!
+
+🔗 Erstellt mit https://aehm-zaehler.de`
+
+    navigator.clipboard.writeText(commentText).then(() => {
+      setCopyStatus('copied-comment')
+      setTimeout(() => setCopyStatus('idle'), 2500)
+    }).catch(() => {})
   }
 
   const copyTextSummary = () => {
@@ -1348,11 +1383,19 @@ ${advice.summary}
                       <div className="report-action-bar">
                         <button
                           type="button"
+                          className="report-btn report-btn-comment"
+                          onClick={copyFeedbackComment}
+                          title="Freundliches Feedback mit Einleitung als YouTube-Kommentar kopieren"
+                        >
+                          {copyStatus === 'copied-comment' ? '✓ Kommentar kopiert!' : '💬 YouTube-Kommentar kopieren'}
+                        </button>
+                        <button
+                          type="button"
                           className="report-btn report-btn-copy"
                           onClick={copyTextSummary}
-                          title="Formatierte Zusammenfassung kopieren (für E-Mail, YouTube-Kommentare etc.)"
+                          title="Kurze Statistik-Zusammenfassung kopieren (für E-Mail, Notizen etc.)"
                         >
-                          {copyStatus === 'copied' ? '✓ Text kopiert!' : '📋 Text-Bericht kopieren'}
+                          {copyStatus === 'copied' ? '✓ Bericht kopiert!' : '📋 Kurzbericht kopieren'}
                         </button>
                         <button
                           type="button"
