@@ -1123,10 +1123,103 @@ h2 {
 
 .youtube-player-card {
   margin: 12px 0;
-  padding: 12px;
+  padding: 14px;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.02);
+}
+
+.video-player-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.video-player-title-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 70%;
+}
+
+.video-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  letter-spacing: 0.08em;
+}
+
+.video-name-heading {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+  font-family: 'Outfit', sans-serif;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.video-sync-subhint {
+  font-size: 11px;
+  color: var(--muted);
+  background: rgba(0, 0, 0, 0.04);
+  padding: 3px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.timeline-header-flex {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+  gap: 10px;
+}
+
+.media-pill-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid var(--line);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink);
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-pill-tag .pill-dot {
+  color: #f37d21;
+  font-size: 8px;
+}
+
+.analyzing-media-callout {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid var(--line);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 6px 0 10px;
+  max-width: 90%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .youtube-player-wrap {
@@ -1137,7 +1230,7 @@ h2 {
   border-radius: 8px;
   overflow: hidden;
   background: #000;
-  margin-top: 8px;
+  margin-top: 4px;
 }
 
 .youtube-player-wrap iframe,

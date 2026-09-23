@@ -265,9 +265,30 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
     console.log('[analyze] Words to search:', words)
 
     let file = request.file
+    let mediaTitle = request.body.title ? String(request.body.title).trim() : ''
+    if (file && !mediaTitle) {
+      mediaTitle = file.originalname
+    }
+
     if (!file && request.body.url) {
       console.log('[analyze] Downloading from URL:', request.body.url)
       sendEvent({ type: 'status', stage: 'download', message: 'Lade Video / Audio von YouTube herunter...' })
+
+      // Fetch YouTube video title
+      try {
+        const info = await youtubedl(request.body.url, {
+          ...commonYtDlpOptions,
+          dumpSingleJson: true,
+          noPlaylist: true,
+        }, { timeout: 12000 })
+        if (info?.title && !mediaTitle) {
+          mediaTitle = info.title
+          jobState.mediaTitle = mediaTitle
+          sendEvent({ type: 'status', stage: 'download', message: `Lade „${mediaTitle}“ von YouTube herunter...`, mediaTitle })
+        }
+      } catch (tErr) {
+        console.log('[analyze] Title fetch note:', tErr?.message)
+      }
 
       const output = join(temporaryDirectory, 'audio.%(ext)s')
       try {
@@ -419,6 +440,7 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
                   totalWords,
                   relativeRate,
                   segments: finalSegments,
+                  mediaTitle: mediaTitle || (file ? file.originalname : ''),
                 },
               })
             }

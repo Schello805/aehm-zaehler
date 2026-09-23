@@ -32,6 +32,7 @@ type Result = {
   duration: number
   text: string
   segments: TranscriptSegment[]
+  mediaTitle?: string
 }
 
 type TranscriptSegment = {
@@ -595,14 +596,38 @@ ${advice.summary}
     }
   }, [file, url])
 
-  const sourceLabel = url || file?.name || 'Unbekannte Quelle'
   const activeHistoryEntry = useMemo(
     () => (activeHistoryId ? history.find((entry) => entry.id === activeHistoryId) : null),
     [history, activeHistoryId]
   )
-  const activeSourceLabel = activeHistoryEntry
-    ? (activeHistoryEntry.title || activeHistoryEntry.sourceLabel)
-    : sourceLabel
+  const currentMediaTitle = useMemo(() => {
+    if (activeHistoryEntry?.title) return activeHistoryEntry.title
+    if (activeHistoryEntry?.sourceLabel) return activeHistoryEntry.sourceLabel
+    if (analysisTitle) return analysisTitle
+    if (result?.mediaTitle) return result.mediaTitle
+    if (file?.name) return file.name
+    if (url) {
+      const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))([\w-]{11})/)
+      if (match) return `YouTube (${match[1]})`
+      return url
+    }
+    return ''
+  }, [activeHistoryEntry, analysisTitle, result, file, url])
+
+  const activeSourceLabel = currentMediaTitle || 'Unbekannte Quelle'
+
+  // Dynamic Browser Tab Title to clearly distinguish multiple instances/tabs
+  useEffect(() => {
+    if (isAnalyzing) {
+      document.title = currentMediaTitle
+        ? `(${Math.round(progress.percent)}%) ${currentMediaTitle} — ähzähler`
+        : `(${Math.round(progress.percent)}%) Analyse läuft — ähzähler`
+    } else if (result && currentMediaTitle) {
+      document.title = `✓ ${currentMediaTitle} — ähzähler`
+    } else {
+      document.title = 'ähzähler — Füllwörter sichtbar machen'
+    }
+  }, [isAnalyzing, progress.percent, result, currentMediaTitle])
 
   const detectedCrutchWords = useMemo(() => {
     if (!result?.text) return []
@@ -1085,6 +1110,12 @@ ${advice.summary}
                       <span className="live-pulse-beacon"></span>
                       <span>KI-ANALYSE LÄUFT LIVE</span>
                     </div>
+                    {currentMediaTitle && (
+                      <div className="analyzing-media-callout" title={currentMediaTitle}>
+                        <span className="callout-icon">🎬</span>
+                        <span className="callout-title">{currentMediaTitle}</span>
+                      </div>
+                    )}
                     <div className="waveform-equalizer active">
                       <span /><span /><span /><span /><span /><span /><span /><span /><span /><span /><span />
                     </div>
@@ -1349,7 +1380,15 @@ ${advice.summary}
                   })()}
 
                   <div className="waveform-bar-card">
-                    <div className="section-label">Interaktive Füllwort-Timeline & Player</div>
+                    <div className="timeline-header-flex">
+                      <div className="section-label">Interaktive Füllwort-Timeline & Player</div>
+                      {currentMediaTitle && (
+                        <div className="media-pill-tag" title={currentMediaTitle}>
+                          <span className="pill-dot">●</span>
+                          <span className="pill-text">{currentMediaTitle}</span>
+                        </div>
+                      )}
+                    </div>
                     <div
                       className="waveform-timeline"
                       title="Klicke auf eine Stelle, um dorthin zu springen"
@@ -1411,13 +1450,21 @@ ${advice.summary}
 
                   {activeYoutubeId && (
                     <div className="youtube-player-card">
-                      <div className="section-label">📺 YouTube Sync-Player (Klick auf Transkript springt im Video)</div>
+                      <div className="video-player-header">
+                        <div className="video-player-title-info">
+                          <span className="video-badge">📺 YOUTUBE SYNC-PLAYER</span>
+                          <h4 className="video-name-heading" title={currentMediaTitle}>
+                            🎬 {currentMediaTitle || 'YouTube Video'}
+                          </h4>
+                        </div>
+                        <span className="video-sync-subhint">Klick auf Transkript springt im Video</span>
+                      </div>
                       <div className="youtube-player-wrap">
                         <iframe
                           id="youtube-sync-iframe"
                           key={activeYoutubeId}
                           src={`https://www.youtube-nocookie.com/embed/${activeYoutubeId}?enablejsapi=1&version=3&rel=0&autoplay=0`}
-                          title="YouTube Sync Video"
+                          title={currentMediaTitle || 'YouTube Sync Video'}
                           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                           allowFullScreen
                         />
