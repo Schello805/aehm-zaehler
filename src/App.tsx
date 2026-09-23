@@ -369,7 +369,11 @@ function App() {
             const json = JSON.parse(text)
             if (json.error) errorMsg = json.error
           } catch {
-            if (text && text.length < 300) errorMsg = text
+            if (text.includes('502 Bad Gateway')) {
+              errorMsg = '502 Bad Gateway: Der Serverdienst ist nicht erreichbar. Bitte auf dem Server "/opt/aehm-zaehler/update.sh" ausführen.'
+            } else if (text && text.length < 300 && !text.includes('<html')) {
+              errorMsg = text
+            }
           }
         } catch {}
         throw new Error(errorMsg)

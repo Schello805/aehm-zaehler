@@ -252,6 +252,7 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
               }
               segments.push(seg)
               textParts.push(seg.text)
+              console.log('[analyze] Segment (', seg.start.toFixed(1), 's -', seg.end.toFixed(1), 's):', seg.text)
 
               const currentText = textParts.join(' ')
               const counts = Object.fromEntries(words.map((word) => [word, countWordOccurrences(currentText, word)]))
@@ -294,6 +295,7 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
                   }))
                 : segments
 
+              console.log('[analyze] Complete! Total words:', totalWords, 'Fillers:', fillerWords, 'Segments:', finalSegments.length)
               sendEvent({
                 type: 'complete',
                 result: {
@@ -319,10 +321,12 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
       })
 
       childProcess.on('error', (err) => {
+        console.error('[analyze] Python process spawn error:', err)
         reject(err)
       })
 
       childProcess.on('close', (code) => {
+        console.log('[analyze] Python process exited with code:', code)
         if (code !== 0 && !isAborted) {
           reject(new Error(`Whisper-Transkription fehlgeschlagen (Code ${code}): ${stderrBuffer.slice(-500)}`))
         } else {
