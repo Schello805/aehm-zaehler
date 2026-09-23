@@ -91,7 +91,7 @@ const getCacheKey = (url, words) => {
   const ytId = getYouTubeVideoId(url)
   const normalizedSource = ytId ? `yt:${ytId}` : String(url).trim().toLowerCase()
   const normalizedWords = [...words].map((w) => String(w).trim().toLowerCase()).sort().join(',')
-  return `${normalizedSource}:::${normalizedWords}`
+  return `v3:::${normalizedSource}:::${normalizedWords}`
 }
 
 const getFromCache = (url, words) => {
@@ -313,28 +313,62 @@ const performSpeakerDiarization = (rawSegments, words) => {
 
   const detectedNames = extractSpeakerNamesFromTranscript(rawSegments)
   const name1 = detectedNames[0] || 'Sprecher 1'
-  const name2 = detectedNames[1] || (detectedNames.length === 1 ? 'Gast / Gesprächspartner' : 'Sprecher 2')
+  const name2 = detectedNames[1] || (detectedNames.length === 1 ? 'Gast / Co-Host' : 'Sprecher 2')
 
-  let currentSpeakerIdx = 0
-  let isMultiSpeaker = false
+  // 1. Acoustic Pitch Analysis for Voice Separation
+  const validPitches = rawSegments
+    .map((s) => Number(s.pitch || 0))
+    .filter((p) => p >= 75 && p <= 360)
+    .sort((a, b) => a - b)
+
+  let usePitchClustering = false
+  let pitchCenter1 = 0
+  let pitchCenter2 = 0
+
+  if (validPitches.length >= 4) {
+    const q25 = validPitches[Math.floor(validPitches.length * 0.25)]
+    const q75 = validPitches[Math.floor(validPitches.length * 0.75)]
+    const spread = q75 - q25
+
+    if (spread >= 24) {
+      usePitchClustering = true
+      const lowerHalf = validPitches.slice(0, Math.floor(validPitches.length / 2))
+      const upperHalf = validPitches.slice(Math.floor(validPitches.length / 2))
+      pitchCenter1 = lowerHalf[Math.floor(lowerHalf.length / 2)] || q25
+      pitchCenter2 = upperHalf[Math.floor(upperHalf.length / 2)] || q75
+      console.log(`[Diarization] Detected 2 distinct voice pitch clusters: ${pitchCenter1.toFixed(1)} Hz vs ${pitchCenter2.toFixed(1)} Hz (Spread: ${spread.toFixed(1)} Hz)`)
+    }
+  }
 
   const turnMarkers = [
     /^(?:ja|nein|genau|stimmt|absolut|danke|vielen dank|hallo|guten tag|guten morgen|guten abend|servus|moin|auf jeden fall|interessant|frage|was meinst du|wie siehst du|ich glaube|wir haben|übergebe|herzlich willkommen|schönen guten|okay|alles klar|richtig)/i,
     /(?:\?|\!)$/
   ]
 
-  const enrichedSegments = []
+  let currentSpeakerIdx = 0
+  let isMultiSpeaker = usePitchClustering || detectedNames.length > 1
   let speakerTurnCount = 0
+
+  const enrichedSegments = []
 
   rawSegments.forEach((s, idx) => {
     const segStart = Number(s.start || 0)
     const segEnd = Number(s.end || 0)
     const segText = String(s.text || '').trim()
+    const segPitch = Number(s.pitch || 0)
     const segWordCount = segText ? segText.split(/\s+/).length : 0
     const segDurationMin = Math.max(0.01, (segEnd - segStart) / 60)
     const wpm = Math.round(segWordCount / segDurationMin)
 
-    if (idx > 0) {
+    if (usePitchClustering && segPitch >= 75 && segPitch <= 360) {
+      const dist1 = Math.abs(segPitch - pitchCenter1)
+      const dist2 = Math.abs(segPitch - pitchCenter2)
+      const decidedIdx = dist1 <= dist2 ? 0 : 1
+      if (decidedIdx !== currentSpeakerIdx) {
+        currentSpeakerIdx = decidedIdx
+        speakerTurnCount++
+      }
+    } else if (idx > 0) {
       const prevEnd = Number(rawSegments[idx - 1].end || 0)
       const prevText = String(rawSegments[idx - 1].text || '').trim()
       const gap = segStart - prevEnd
@@ -342,34 +376,27 @@ const performSpeakerDiarization = (rawSegments, words) => {
       const prevHasQuestion = prevText.endsWith('?')
       const currentHasTurnCue = turnMarkers[0].test(segText)
       
-      if (gap >= 1.0 || (gap >= 0.4 && (prevHasQuestion || currentHasTurnCue))) {
+      if (gap >= 0.9 || (gap >= 0.35 && (prevHasQuestion || currentHasTurnCue))) {
         currentSpeakerIdx = currentSpeakerIdx === 0 ? 1 : 0
         speakerTurnCount++
         isMultiSpeaker = true
       }
     }
 
-    const speakerId = isMultiSpeaker || detectedNames.length > 1 ? `speaker_${currentSpeakerIdx + 1}` : 'speaker_1'
+    const speakerId = isMultiSpeaker ? `speaker_${currentSpeakerIdx + 1}` : 'speaker_1'
     const speakerName = speakerId === 'speaker_1' ? name1 : name2
 
     enrichedSegments.push({
       start: segStart,
       end: segEnd,
       text: segText,
+      pitch: segPitch,
       counts: countSegmentWords(segText, words),
       wpm: isNaN(wpm) ? 0 : Math.min(300, Math.max(0, wpm)),
       speakerId,
       speakerName,
     })
   })
-
-  // If no turns detected and only single name, keep single speaker
-  if (speakerTurnCount < 1 && detectedNames.length <= 1) {
-    enrichedSegments.forEach((s) => {
-      s.speakerId = 'speaker_1'
-      s.speakerName = name1
-    })
-  }
 
   // Aggregate speaker stats
   const speakers = {}

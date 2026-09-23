@@ -1,8 +1,44 @@
 import json
+import os
 import sys
 from pathlib import Path
 
+import numpy as np
 from faster_whisper import WhisperModel
+from faster_whisper.audio import decode_audio
+
+
+def estimate_segment_pitch(audio_segment: np.ndarray, sr: int = 16000) -> float:
+    if len(audio_segment) < sr * 0.25:
+        return 0.0
+    frame_size = 1024
+    hop_size = 512
+    min_lag = int(sr / 380)  # ~42 samples (380 Hz)
+    max_lag = int(sr / 75)   # ~213 samples (75 Hz)
+
+    pitches = []
+    for i in range(0, len(audio_segment) - frame_size, hop_size):
+        frame = audio_segment[i:i + frame_size].astype(np.float32)
+        frame = frame - np.mean(frame)
+        energy = np.sum(frame ** 2)
+        if energy < 1e-4:
+            continue
+        corr = np.correlate(frame, frame, mode='full')
+        corr = corr[len(frame) - 1:]
+        if len(corr) <= max_lag:
+            continue
+        search_window = corr[min_lag:max_lag]
+        if len(search_window) == 0:
+            continue
+        peak_idx = int(np.argmax(search_window)) + min_lag
+        peak_val = corr[peak_idx]
+        if corr[0] > 0 and (peak_val / corr[0]) > 0.32:  # Voiced frame threshold
+            freq = sr / peak_idx
+            pitches.append(freq)
+
+    if len(pitches) >= 2:
+        return float(np.median(pitches))
+    return 0.0
 
 
 def main() -> None:
@@ -15,7 +51,12 @@ def main() -> None:
     user_words = {w.strip() for w in hotwords_arg.split(',') if w.strip()}
     all_hotwords = ', '.join(sorted(base_hotwords.union(user_words)))
 
-    import os
+    audio_samples = None
+    try:
+        audio_samples = decode_audio(str(input_path), sampling_rate=16000)
+    except Exception as e:
+        sys.stderr.write(f'Audio decode warning: {e}\n')
+
     threads = max(1, min(4, os.cpu_count() or 2))
     model = WhisperModel('small', device='cpu', compute_type='int8', cpu_threads=threads)
     segments, info = model.transcribe(
@@ -41,10 +82,18 @@ def main() -> None:
     text_parts = []
     for segment in segments:
         text_parts.append(segment.text)
+        pitch = 0.0
+        if audio_samples is not None:
+            start_samp = max(0, int(segment.start * 16000))
+            end_samp = min(len(audio_samples), int(segment.end * 16000))
+            if end_samp > start_samp:
+                pitch = estimate_segment_pitch(audio_samples[start_samp:end_samp], sr=16000)
+
         s_obj = {
             'start': segment.start,
             'end': segment.end,
             'text': segment.text.strip(),
+            'pitch': round(pitch, 1),
         }
         segment_data.append(s_obj)
         sys.stdout.write(json.dumps({'type': 'segment', 'segment': s_obj}, ensure_ascii=False) + '\n')
