@@ -715,6 +715,17 @@ ${advice.summary}
     }
   }, [isAnalyzing, progress.percent, result, currentMediaTitle])
 
+  // Matomo SPA Page View Tracking (tracked on tab/view switch)
+  useEffect(() => {
+    if (typeof window !== 'undefined' && (window as any)._paq) {
+      const pageUrl = window.location.pathname + (view === 'analyse' ? '' : `#${view}`)
+      const paq = (window as any)._paq
+      paq.push(['setCustomUrl', pageUrl])
+      paq.push(['setDocumentTitle', document.title || 'ähm-zähler'])
+      paq.push(['trackPageView'])
+    }
+  }, [view])
+
   const detectedCrutchWords = useMemo(() => {
     if (!result?.text) return []
     // Curated list of genuine German verbal crutches & rhetorical filler phrases (Floskeln)
