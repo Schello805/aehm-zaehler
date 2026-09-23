@@ -42,6 +42,7 @@ type TranscriptSegment = {
   end: number
   text: string
   counts: Record<string, number>
+  pitch?: number
   wpm?: number
   speakerId?: string
   speakerName?: string
@@ -61,6 +62,137 @@ type Result = {
   mediaTitle?: string
   pauseCount?: number
   totalPauseSeconds?: number
+}
+
+const ensureMultiSpeakerDiarization = (resultData: Result, wordsList: string[]): Result => {
+  if (!resultData || !resultData.segments || resultData.segments.length === 0) return resultData
+
+  // If already has 2+ distinct speakers with actual speech, keep
+  if (resultData.speakers && Object.keys(resultData.speakers).length > 1) {
+    const populated = Object.values(resultData.speakers).filter((s) => s.totalWords > 0)
+    if (populated.length > 1) return resultData
+  }
+
+  const rawSegments = resultData.segments
+  const validPitches = rawSegments
+    .map((s) => Number(s.pitch || 0))
+    .filter((p) => p >= 75 && p <= 360)
+    .sort((a, b) => a - b)
+
+  let usePitchClustering = false
+  let pitchCenter1 = 0
+  let pitchCenter2 = 0
+
+  if (validPitches.length >= 4) {
+    const q25 = validPitches[Math.floor(validPitches.length * 0.25)]
+    const q75 = validPitches[Math.floor(validPitches.length * 0.75)]
+    const spread = q75 - q25
+
+    if (spread >= 24) {
+      usePitchClustering = true
+      const lowerHalf = validPitches.slice(0, Math.floor(validPitches.length / 2))
+      const upperHalf = validPitches.slice(Math.floor(validPitches.length / 2))
+      pitchCenter1 = lowerHalf[Math.floor(lowerHalf.length / 2)] || q25
+      pitchCenter2 = upperHalf[Math.floor(upperHalf.length / 2)] || q75
+    }
+  }
+
+  const turnMarkers = [
+    /^(?:ja|nein|genau|stimmt|absolut|danke|vielen dank|hallo|guten tag|guten morgen|guten abend|servus|moin|auf jeden fall|interessant|frage|was meinst du|wie siehst du|ich glaube|wir haben|übergebe|herzlich willkommen|schönen guten|okay|alles klar|richtig)/i,
+    /(?:\?|\!)$/
+  ]
+
+  let currentSpeakerIdx = 0
+  let isMultiSpeaker = usePitchClustering
+  let speakerTurnCount = 0
+
+  const enrichedSegments = rawSegments.map((s, idx) => {
+    const segPitch = Number(s.pitch || 0)
+    if (usePitchClustering && segPitch >= 75 && segPitch <= 360) {
+      const dist1 = Math.abs(segPitch - pitchCenter1)
+      const dist2 = Math.abs(segPitch - pitchCenter2)
+      const decidedIdx = dist1 <= dist2 ? 0 : 1
+      if (decidedIdx !== currentSpeakerIdx) {
+        currentSpeakerIdx = decidedIdx
+        speakerTurnCount++
+      }
+    } else if (idx > 0) {
+      const prevEnd = Number(rawSegments[idx - 1].end || 0)
+      const prevText = String(rawSegments[idx - 1].text || '').trim()
+      const segText = String(s.text || '').trim()
+      const gap = Number(s.start || 0) - prevEnd
+
+      const prevHasQuestion = prevText.endsWith('?')
+      const currentHasTurnCue = turnMarkers[0].test(segText)
+      
+      if (gap >= 0.9 || (gap >= 0.35 && (prevHasQuestion || currentHasTurnCue))) {
+        currentSpeakerIdx = currentSpeakerIdx === 0 ? 1 : 0
+        speakerTurnCount++
+        isMultiSpeaker = true
+      }
+    }
+
+    const speakerId = isMultiSpeaker ? `speaker_${currentSpeakerIdx + 1}` : 'speaker_1'
+    const speakerName = s.speakerName && s.speakerName !== 'Sprecher 1' ? s.speakerName : (speakerId === 'speaker_1' ? 'Sprecher 1' : 'Sprecher 2')
+
+    return {
+      ...s,
+      speakerId,
+      speakerName,
+    }
+  })
+
+  if (isMultiSpeaker || speakerTurnCount > 0) {
+    const colors = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ec4899', '#06b6d4']
+    const speakers: Record<string, SpeakerStats> = {}
+    enrichedSegments.forEach((s) => {
+      const spId = s.speakerId || 'speaker_1'
+      if (!speakers[spId]) {
+        const idx = spId === 'speaker_1' ? 0 : 1
+        speakers[spId] = {
+          id: spId,
+          name: s.speakerName || `Sprecher ${idx + 1}`,
+          color: colors[idx % colors.length],
+          totalWords: 0,
+          fillerWords: 0,
+          baseFillerWords: 0,
+          relativeRate: 0,
+          duration: 0,
+          wpm: 0,
+          counts: Object.fromEntries(wordsList.map((w) => [w, 0])),
+        }
+      }
+
+      const wordsInSeg = s.text.trim() ? s.text.trim().split(/\s+/).length : 0
+      const segDur = Math.max(0, s.end - s.start)
+      speakers[spId].totalWords += wordsInSeg
+      speakers[spId].duration += segDur
+
+      if (s.counts) {
+        Object.entries(s.counts).forEach(([w, count]) => {
+          if (speakers[spId].counts[w] !== undefined) {
+            speakers[spId].counts[w] += Number(count)
+          }
+        })
+      }
+    })
+
+    Object.values(speakers).forEach((sp) => {
+      sp.fillerWords = Object.values(sp.counts).reduce((a, b) => a + b, 0)
+      sp.baseFillerWords = sp.fillerWords
+      sp.relativeRate = sp.totalWords > 0 ? (sp.fillerWords / sp.totalWords) * 100 : 0
+      sp.wpm = sp.duration > 0 ? Math.round((sp.totalWords / (sp.duration / 60))) : 0
+      sp.duration = Math.round(sp.duration * 10) / 10
+    })
+
+    return {
+      ...resultData,
+      segments: enrichedSegments,
+      speakers,
+    }
+  }
+
+  return resultData
 }
 
 type ProgressState = {
@@ -341,7 +473,8 @@ function App() {
         })
 
         if (match) {
-          setResult(match.result)
+          const enriched = ensureMultiSpeakerDiarization(match.result, words)
+          setResult(enriched)
           setActiveHistoryId(match.id)
           setUrl(match.source)
           setFile(null)
@@ -1384,9 +1517,9 @@ ${advice.summary}
         }
 
         isCompleted = true
-        if (pollerInterval) clearInterval(pollerInterval)
-        console.log('[Analyze] Complete! Final result:', finalResult)
-        setResult(finalResult)
+        const enriched = ensureMultiSpeakerDiarization(finalResult, words)
+        console.log('[Analyze] Complete! Final result:', enriched)
+        setResult(enriched)
         setProgress({ percent: 100, step: progressSteps.length - 1, label: 'Ergebnis fertig', remainingSeconds: 0 })
 
         const fallbackTitle = targetUrl || file?.name || 'Unbekannte Quelle'
@@ -1395,7 +1528,7 @@ ${advice.summary}
           source: fallbackTitle,
           sourceLabel: fallbackTitle,
           createdAt: new Date().toISOString(),
-          result: finalResult,
+          result: enriched,
           words: [...words],
           title: analysisTitle.trim() || fallbackTitle,
           note: analysisNote.trim(),
@@ -2642,7 +2775,7 @@ ${advice.summary}
                                 type="button"
                                 className="history-result-button"
                                 onClick={() => {
-                                  setResult(entry.result)
+                                  setResult(ensureMultiSpeakerDiarization(entry.result, words))
                                   setActiveHistoryId(entry.id)
                                   setUrl(entry.source.startsWith('http') ? entry.source : '')
                                   setFile(null)
