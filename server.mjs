@@ -136,13 +136,27 @@ app.get('/api/analyze-status/:id', (request, response) => {
   return response.json(job)
 })
 
+const killProcessTree = (child) => {
+  if (!child) return
+  try {
+    if (child.pid) {
+      process.kill(child.pid, 'SIGKILL')
+    }
+  } catch {}
+  try {
+    child.kill('SIGKILL')
+  } catch {}
+}
+
 app.post('/api/analyze-cancel/:id', (request, response) => {
   const id = request.params.id
+  console.log('[analyze] Cancel requested for job:', id)
   const job = activeJobs.get(id)
   if (job) {
     job.status = 'aborted'
     if (job.childProcess) {
-      try { job.childProcess.kill('SIGKILL') } catch {}
+      killProcessTree(job.childProcess)
+      job.childProcess = null
     }
   }
   return response.json({ ok: true })
@@ -314,6 +328,7 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
       let stderrBuffer = ''
 
       childProcess = spawn(pythonPath, [scriptPath, workingAudioPath, words.join(',')])
+      jobState.childProcess = childProcess
 
       childProcess.stdout.on('data', (chunk) => {
         stdoutBuffer += chunk.toString()

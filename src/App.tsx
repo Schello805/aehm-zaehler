@@ -162,6 +162,7 @@ function App() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const playbackRef = useRef<HTMLAudioElement>(null)
   const analysisControllerRef = useRef<AbortController | null>(null)
+  const currentJobIdRef = useRef<string | null>(null)
   const playbackUrl = useMemo(() => (file ? URL.createObjectURL(file) : ''), [file])
 
   const activeSourceUrl = useMemo(() => {
@@ -531,6 +532,7 @@ function App() {
     setProgress({ percent: 5, step: 0, label: url ? 'Lade Video von YouTube...' : 'Audiodatei wird vorbereitet...', remainingSeconds: null })
 
     const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    currentJobIdRef.current = jobId
     console.log('[Analyze] Starting analysis with jobId:', jobId, { file: file?.name, url, words })
 
     const body = new FormData()
@@ -735,6 +737,14 @@ function App() {
 
   const cancelAnalysis = () => {
     analysisControllerRef.current?.abort()
+    const activeId = currentJobIdRef.current
+    if (activeId) {
+      try {
+        fetch(`/api/analyze-cancel/${activeId}`, { method: 'POST' }).catch(() => {})
+      } catch {}
+    }
+    setIsAnalyzing(false)
+    setProgress({ percent: 0, step: 0, label: 'Analyse abgebrochen', remainingSeconds: null })
   }
 
   return (
