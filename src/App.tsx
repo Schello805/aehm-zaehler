@@ -1242,7 +1242,19 @@ ${advice.summary}
           saveWord={saveWord}
         />
       ) : view === 'live' ? (
-        <LiveStudio words={words} />
+        <LiveStudio
+          words={words}
+          onOpenInAnalysis={(res, audioFile) => {
+            setResult(res)
+            if (audioFile) setFile(audioFile)
+            setUrl('')
+            setActiveHistoryId(null)
+            setView('analyse')
+          }}
+          onSaveToHistory={(entry) => {
+            setHistory((prev) => [entry, ...prev.filter((h) => h.id !== entry.id)])
+          }}
+        />
       ) : (
         <>
           <section className="intro">
@@ -2233,54 +2245,172 @@ function Settings({
 }
 
 // Multi-variant mappings for common German hesitation sounds and filler phrases
-const FILLER_VARIANT_MAP: Record<string, string[][]> = {
-  "äh": [["äh", "ä", "ah", "aeh", "eh", "öh", "oeh", "ähh", "ähhh", "ää", "äääh", "uh", "er", "a"]],
-  "ähm": [["ähm", "m", "em", "mm", "mmm", "hm", "hmm", "hmmm", "ahm", "am", "öhm", "oehm", "uhm", "erm", "äm", "aem", "äähm", "äh", "aehm", "ehm"]],
-  "also äh": [["also"], ["äh", "ä", "ah", "aeh", "eh", "öh", "oeh", "ähh", "ähhh", "ää", "uh", "er", "a"]],
-  "also ähm": [["also"], ["ähm", "m", "em", "mm", "mmm", "hm", "hmm", "hmmm", "ahm", "am", "öhm", "uhm", "erm", "äm", "äähm"]],
-  "aber äh": [["aber"], ["äh", "ä", "ah", "aeh", "eh", "öh", "oeh", "ähh", "ähhh", "ää", "uh", "er", "a"]],
-  "aber ähm": [["aber"], ["ähm", "m", "em", "mm", "mmm", "hm", "hmm", "hmmm", "ahm", "am", "öhm", "uhm", "erm", "äm", "äähm"]],
-  "und äh": [["und"], ["äh", "ä", "ah", "aeh", "eh", "öh", "oeh", "ähh", "ähhh", "ää", "uh", "er", "a"]],
-  "und ähm": [["und"], ["ähm", "m", "em", "mm", "mmm", "hm", "hmm", "hmmm", "ahm", "am", "öhm", "uhm", "erm", "äm", "äähm"]],
-  "sozusagen": [["sozusagen", "sozusagn"]],
-  "eigentlich": [["eigentlich"]],
-  "quasi": [["quasi"]],
-  "praktisch": [["praktisch"]],
-  "halt": [["halt"]],
-  "irgendwie": [["irgendwie"]],
-  "im grunde": [["im", "in"], ["grunde", "grund"]],
-  "im endeffekt": [["im", "in"], ["endeffekt"]]
+const FILLER_VARIANT_MAP: Record<string, string[][][]> = {
+  "äh": [
+    [["äh", "ä", "ah", "aeh", "eh", "er", "öh", "oeh", "ähh", "ähhh", "ää", "äääh", "uh", "a"]]
+  ],
+  "ähm": [
+    [["ähm", "m", "em", "mm", "mmm", "hm", "hmm", "hmmm", "ahm", "am", "öhm", "oehm", "uhm", "erm", "äm", "aem", "äähm", "äh", "aehm", "ehm"]]
+  ],
+  "öh": [
+    [["öh", "oeh", "öhm", "ö", "uh", "er"]]
+  ],
+  "hm": [
+    [["hm", "hmm", "hmmm", "mhm", "m", "mm", "em"]]
+  ],
+  "mhm": [
+    [["mhm", "mm-hmm", "mmhmm", "hm", "hmm"]]
+  ],
+  "also äh": [
+    [["also", "alzo"], ["äh", "ä", "ah", "aeh", "eh", "er", "öh", "oeh", "ähh", "ää", "uh", "a"]]
+  ],
+  "also ähm": [
+    [["also", "alzo"], ["ähm", "m", "em", "mm", "mmm", "hm", "hmm", "hmmm", "ahm", "am", "öhm", "uhm", "erm", "äm", "äähm", "ehm"]]
+  ],
+  "aber äh": [
+    [["aber"], ["äh", "ä", "ah", "aeh", "eh", "er", "öh", "oeh", "ähh", "ää", "uh", "a"]]
+  ],
+  "aber ähm": [
+    [["aber"], ["ähm", "m", "em", "mm", "mmm", "hm", "hmm", "hmmm", "ahm", "am", "öhm", "uhm", "erm", "äm", "äähm", "ehm"]]
+  ],
+  "und äh": [
+    [["und"], ["äh", "ä", "ah", "aeh", "eh", "er", "öh", "oeh", "ähh", "ää", "uh", "a"]]
+  ],
+  "und ähm": [
+    [["und"], ["ähm", "m", "em", "mm", "mmm", "hm", "hmm", "hmmm", "ahm", "am", "öhm", "uhm", "erm", "äm", "äähm", "ehm"]]
+  ],
+  "sozusagen": [
+    [["sozusagen", "sozusagn", "sozusage", "sozesagen", "sozusagens"]],
+    [["so", "soz"], ["zu", "se", "zus"], ["sagen", "sagn", "sage", "sagt"]]
+  ],
+  "eigentlich": [
+    [["eigentlich", "eintlich", "eigentli", "eigentliche", "eigentliches", "eigentlichs", "eigentlicher"]]
+  ],
+  "quasi": [
+    [["quasi", "quasig", "quassi", "kwaasi", "kwasi", "quasie"]]
+  ],
+  "praktisch": [
+    [["praktisch", "praktische", "praktisches", "praktischer", "praktischerweise"]]
+  ],
+  "halt": [
+    [["halt", "halte", "haltt"]]
+  ],
+  "irgendwie": [
+    [["irgendwie", "irgendwas", "irgendwelche"]],
+    [["irgend"], ["wie", "was", "wo", "wann"]]
+  ],
+  "im grunde": [
+    [["im", "in"], ["grunde", "grund", "prinzip"]]
+  ],
+  "im endeffekt": [
+    [["im", "in", "am"], ["endeffekt", "endeffek", "endefeckt"]],
+    [["im", "in", "am"], ["end", "ende"], ["effekt", "effek", "effeck", "effekts"]],
+    [["endeffekt", "endeffek"]]
+  ],
+  "am ende des tages": [
+    [["am", "in", "an"], ["ende", "end"], ["des", "vom", "von", "dem", "der"], ["tages", "tags", "tag", "tage"]],
+    [["am", "in", "an"], ["ende", "end"], ["tag", "tages", "tags"]],
+    [["am"], ["ende"]]
+  ],
+  "ich sag mal": [
+    [["ich", "i"], ["sag", "sage", "sach", "sagt", "sags"], ["mal", "ma", "halt"]],
+    [["sag", "sage", "sach", "sags"], ["mal", "ma"]]
+  ],
+  "gewissermaßen": [
+    [["gewissermaßen", "gewissermassen", "gewissermasen"]],
+    [["gewisser", "gewisse"], ["maßen", "massen", "masen"]]
+  ],
+  "also": [
+    [["also", "alzo"]]
+  ],
+  "dingsbums": [
+    [["dingsbums", "dingsda", "dings", "dings-bums"]],
+    [["dings"], ["bums", "bumms", "da", "dada"]]
+  ],
+  "scheinbar": [
+    [["scheinbar", "scheinbare", "scheinbares", "scheinbarerweise"]]
+  ],
+  "genau": [
+    [["genau", "jenau", "jegenau"]]
+  ]
 };
 
 function countTargetInTokens(tokens: string[], target: string): number {
   const normTarget = target.toLowerCase().trim()
-  const patternSlots: string[][] = FILLER_VARIANT_MAP[normTarget] || (
-    (normTarget.match(/[\p{L}\p{N}]+/gu) || [normTarget]).map((tok) => [tok])
-  )
+  if (!normTarget || !tokens.length) return 0
 
+  const variantEntry = FILLER_VARIANT_MAP[normTarget]
+  if (variantEntry && variantEntry.length > 0) {
+    let count = 0
+    let i = 0
+    while (i < tokens.length) {
+      let matchedLen = 0
+      for (const patternSeq of variantEntry) {
+        const plen = patternSeq.length
+        if (i + plen <= tokens.length) {
+          let seqMatch = true
+          for (let j = 0; j < plen; j++) {
+            const allowed = patternSeq[j]
+            const curr = tokens[i + j]
+            if (!allowed.some(v => v === curr || (curr.length > 3 && (curr.startsWith(v) || v.startsWith(curr))))) {
+              seqMatch = false
+              break
+            }
+          }
+          if (seqMatch) {
+            matchedLen = Math.max(matchedLen, plen)
+          }
+        }
+      }
+
+      if (matchedLen > 0) {
+        count++
+        i += matchedLen
+      } else {
+        i++
+      }
+    }
+    return count
+  }
+
+  // General multi-word or custom word matching with prefix/stem flexibility
+  const targetTokens = normTarget.match(/[\p{L}\p{N}]+/gu) || [normTarget]
+  const plen = targetTokens.length
   let count = 0
-  const plen = patternSlots.length
-  if (plen === 0 || tokens.length < plen) return 0
-
-  for (let i = 0; i <= tokens.length - plen; i++) {
+  let i = 0
+  while (i <= tokens.length - plen) {
     let match = true
     for (let j = 0; j < plen; j++) {
-      if (!patternSlots[j].includes(tokens[i + j])) {
-        match = false
-        break
+      const t = targetTokens[j]
+      const actual = tokens[i + j]
+      if (actual !== t) {
+        if (t.length > 3 && (actual.startsWith(t) || t.startsWith(actual))) {
+          // OK stem match
+        } else {
+          match = false
+          break
+        }
       }
     }
     if (match) {
       count++
-      if (plen > 1) {
-        i += plen - 1
-      }
+      i += plen
+    } else {
+      i++
     }
   }
   return count
 }
 
-function LiveStudio({ words }: { words: string[] }) {
+function LiveStudio({
+  words,
+  onOpenInAnalysis,
+  onSaveToHistory
+}: {
+  words: string[]
+  onOpenInAnalysis?: (result: Result, audioFile?: File) => void
+  onSaveToHistory?: (entry: HistoryEntry) => void
+}) {
   const [isListening, setIsListening] = useState(false)
   const isListeningRef = useRef(false)
   const [liveCount, setLiveCount] = useState(0)
@@ -2291,6 +2421,14 @@ function LiveStudio({ words }: { words: string[] }) {
   const [speechPace, setSpeechPace] = useState(0)
   const [wpmHistory, setWpmHistory] = useState<number[]>([])
   const [isAmbientAlert, setIsAmbientAlert] = useState(false)
+  
+  // Audio recording state
+  const [recordedAudioBlob, setRecordedAudioBlob] = useState<Blob | null>(null)
+  const [recordedAudioUrl, setRecordedAudioUrl] = useState<string | null>(null)
+  const [liveReportResult, setLiveReportResult] = useState<Result | null>(null)
+  const [showReportModal, setShowReportModal] = useState(false)
+  const [copiedReport, setCopiedReport] = useState(false)
+
   const recognitionRef = useRef<any>(null)
   const timerRef = useRef<number | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -2304,6 +2442,11 @@ function LiveStudio({ words }: { words: string[] }) {
   const transcriptBoxRef = useRef<HTMLDivElement | null>(null)
   const elapsedSecondsRef = useRef(0)
   
+  // Audio recording refs
+  const audioRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
+  const mediaStreamRef = useRef<MediaStream | null>(null)
+
   // Persistent tracking across SpeechRecognition pauses/restarts
   const sessionCountRef = useRef(0)
   const accumulatedFinalTextRef = useRef<string>("")
@@ -2577,8 +2720,50 @@ function LiveStudio({ words }: { words: string[] }) {
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      let stream = mediaStreamRef.current
+      if (!stream || !stream.active) {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        mediaStreamRef.current = stream
+      }
       void startVisualizer(stream)
+
+      // Start / Resume MediaRecorder for audio saving
+      if (!audioRecorderRef.current || audioRecorderRef.current.state === "inactive") {
+        try {
+          const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+            ? "audio/webm;codecs=opus"
+            : MediaRecorder.isTypeSupported("audio/webm")
+            ? "audio/webm"
+            : MediaRecorder.isTypeSupported("audio/mp4")
+            ? "audio/mp4"
+            : undefined
+
+          const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+          audioRecorderRef.current = recorder
+
+          recorder.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) {
+              audioChunksRef.current.push(e.data)
+            }
+          }
+
+          recorder.onstop = () => {
+            if (audioChunksRef.current.length > 0) {
+              const mime = audioChunksRef.current[0]?.type || "audio/webm"
+              const blob = new Blob(audioChunksRef.current, { type: mime })
+              setRecordedAudioBlob(blob)
+              const url = URL.createObjectURL(blob)
+              setRecordedAudioUrl(url)
+            }
+          }
+
+          recorder.start(1000)
+        } catch (recErr) {
+          console.warn("[LiveStudio] MediaRecorder init error:", recErr)
+        }
+      } else if (audioRecorderRef.current.state === "paused") {
+        audioRecorderRef.current.resume()
+      }
 
       let currentSessionFinalText = ""
 
@@ -2642,14 +2827,18 @@ function LiveStudio({ words }: { words: string[] }) {
           (sessInterim ? " " + sessInterim : "")
         ).trim()
 
-        // Combine total counts across all stored segments of all sessions
+        const fullTokens = fullTranscript.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []
+
+        // Combine total counts: ensure both full transcript scanning and segment alternatives are captured
         const totalCounts: Record<string, number> = {}
-        for (const w of words) totalCounts[w] = 0
-        segmentFillersRef.current.forEach((segCounts) => {
-          for (const w of words) {
-            totalCounts[w] += (segCounts[w] || 0)
-          }
-        })
+        for (const w of words) {
+          const directCount = countTargetInTokens(fullTokens, w)
+          let segSum = 0
+          segmentFillersRef.current.forEach((segCounts) => {
+            segSum += (segCounts[w] || 0)
+          })
+          totalCounts[w] = Math.max(directCount, segSum)
+        }
 
         const totalFiller = Object.values(totalCounts).reduce((a, b) => a + b, 0)
 
@@ -2667,9 +2856,8 @@ function LiveStudio({ words }: { words: string[] }) {
 
         // WPM calculation
         const secs = elapsedSecondsRef.current
-        const totalTokens = fullTranscript.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []
-        if (totalTokens.length > 0 && secs > 0) {
-          const wpm = Math.round((totalTokens.length / secs) * 60)
+        if (fullTokens.length > 0 && secs > 0) {
+          const wpm = Math.round((fullTokens.length / secs) * 60)
           setSpeechPace(wpm)
           setWpmHistory((prev) => {
             const next = [...prev, wpm]
@@ -2720,10 +2908,10 @@ function LiveStudio({ words }: { words: string[] }) {
       recognitionRef.current = recognition
       isListeningRef.current = true
       setIsListening(true)
-      setLastAlert("Live-Erkennung aktiv. Sprich frei ins Mikrofon!")
+      setLastAlert("Live-Erkennung & Aufnahme aktiv. Sprich frei ins Mikrofon!")
     } catch (e: any) {
       console.error("[LiveStudio] startListening CATCH:", e)
-      if (e?.name === 'NotAllowedError' || e?.name === 'PermissionDeniedError' || String(e).includes('denied permission') || String(e).includes('not allowed')) {
+      if (e?.name === "NotAllowedError" || e?.name === "PermissionDeniedError" || String(e).includes("denied permission") || String(e).includes("not allowed")) {
         setLastAlert("🎙️ Mikrofon-Zugriff blockiert: Bitte klicke oben in der Browser-Adressleiste auf das Schloss/Regler-Symbol, setze 'Mikrofon' auf 'Zulassen' und lade die Seite neu.")
       } else {
         const msg = e instanceof Error ? e.message : String(e)
@@ -2738,12 +2926,125 @@ function LiveStudio({ words }: { words: string[] }) {
       recognitionRef.current.stop()
       recognitionRef.current = null
     }
+    if (audioRecorderRef.current && audioRecorderRef.current.state === "recording") {
+      try {
+        audioRecorderRef.current.pause()
+      } catch (e) {
+        console.warn("Could not pause recorder:", e)
+      }
+    }
     stopVisualizer()
     setIsListening(false)
   }
 
+  const finishSessionAndShowReport = () => {
+    // 1. Stop SpeechRecognition & Recorder
+    isListeningRef.current = false
+    if (recognitionRef.current) {
+      recognitionRef.current.stop()
+      recognitionRef.current = null
+    }
+    if (audioRecorderRef.current && audioRecorderRef.current.state !== "inactive") {
+      try {
+        audioRecorderRef.current.stop()
+      } catch (e) {
+        console.warn("Could not stop audioRecorder:", e)
+      }
+    }
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => track.stop())
+      mediaStreamRef.current = null
+    }
+    stopVisualizer()
+    setIsListening(false)
+
+    // 2. Aggregate final stats
+    const fullText = (
+      (accumulatedFinalTextRef.current ? accumulatedFinalTextRef.current + " " : "") +
+      (liveTranscript || "")
+    ).trim()
+    const tokens = fullText.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []
+    const totalWords = tokens.length
+
+    const finalCounts: Record<string, number> = {}
+    for (const w of words) {
+      const directCount = countTargetInTokens(tokens, w)
+      let segSum = 0
+      segmentFillersRef.current.forEach((seg) => {
+        segSum += (seg[w] || 0)
+      })
+      finalCounts[w] = Math.max(directCount, segSum)
+    }
+
+    const totalFiller = Object.values(finalCounts).reduce((a, b) => a + b, 0)
+    const relativeRate = totalWords > 0 ? (totalFiller / totalWords) * 100 : 0
+    const duration = Math.max(1, elapsedSecondsRef.current)
+    const baseFillerWords = (finalCounts["äh"] || 0) + (finalCounts["ähm"] || 0)
+
+    const segments: TranscriptSegment[] = []
+    if (fullText) {
+      segments.push({
+        start: 0,
+        end: duration,
+        text: fullText,
+        counts: { ...finalCounts },
+        wpm: totalWords > 0 ? Math.round((totalWords / duration) * 60) : 0
+      })
+    }
+
+    const sessionResult: Result = {
+      counts: finalCounts,
+      fillerWords: totalFiller,
+      baseFillerWords,
+      totalWords,
+      relativeRate,
+      duration,
+      text: fullText,
+      segments,
+      mediaTitle: `Live Studio Training (${new Date().toLocaleDateString("de-DE")})`
+    }
+
+    setLiveReportResult(sessionResult)
+    setShowReportModal(true)
+
+    // Save to history automatically
+    if (onSaveToHistory) {
+      const historyEntry: HistoryEntry = {
+        id: "live-" + Date.now(),
+        source: "live-mic",
+        sourceLabel: `Live Studio (${new Date().toLocaleDateString("de-DE")} ${new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })})`,
+        createdAt: new Date().toISOString(),
+        result: sessionResult,
+        words: [...words],
+        title: `Live Studio Training (${new Date().toLocaleDateString("de-DE")})`,
+        note: `Live-Aufnahme mit ${totalFiller} Füllwörtern bei ${totalWords > 0 ? Math.round((totalWords / duration) * 60) : 0} WPM`,
+        tags: ["Live Studio", "Training"]
+      }
+      onSaveToHistory(historyEntry)
+    }
+  }
+
   const resetLiveSession = () => {
     stopListening()
+    if (audioRecorderRef.current && audioRecorderRef.current.state !== "inactive") {
+      try {
+        audioRecorderRef.current.stop()
+      } catch (e) {
+        // ignore
+      }
+    }
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => track.stop())
+      mediaStreamRef.current = null
+    }
+    audioChunksRef.current = []
+    if (recordedAudioUrl) {
+      URL.revokeObjectURL(recordedAudioUrl)
+    }
+    setRecordedAudioBlob(null)
+    setRecordedAudioUrl(null)
+    setLiveReportResult(null)
+    setShowReportModal(false)
     setLiveCount(0)
     setWordCounts({})
     setLiveTranscript("")
@@ -2760,17 +3061,100 @@ function LiveStudio({ words }: { words: string[] }) {
     if (ctx && particleCanvasRef.current) ctx.clearRect(0, 0, particleCanvasRef.current.width, particleCanvasRef.current.height)
   }
 
+  const handleCopyReport = () => {
+    if (!liveReportResult) return
+    const wpm = liveReportResult.totalWords > 0 ? Math.round((liveReportResult.totalWords / liveReportResult.duration) * 60) : 0
+    const lines = [
+      `📊 Live Studio Trainings-Report — ${new Date().toLocaleDateString("de-DE")}`,
+      `⏱️ Dauer: ${formatTimestamp(liveReportResult.duration)} min | 🗣️ Wörter: ${liveReportResult.totalWords} | 📈 Tempo: ${wpm} WPM`,
+      `🔴 Füllwörter gesamt: ${liveReportResult.fillerWords} (${liveReportResult.relativeRate.toFixed(1)} % Quote)`,
+      ``,
+      `📋 Füllwort-Aufschlüsselung:`,
+      ...Object.entries(liveReportResult.counts)
+        .filter(([_, count]) => count > 0)
+        .map(([word, count]) => `• „${word}“: ${count}x`),
+      ``,
+      `📝 Transkript:`,
+      `"${liveReportResult.text}"`
+    ]
+    navigator.clipboard.writeText(lines.join("\n"))
+    setCopiedReport(true)
+    setTimeout(() => setCopiedReport(false), 2500)
+  }
+
+  const handleDownloadTxt = () => {
+    if (!liveReportResult) return
+    const blob = new Blob([liveReportResult.text], { type: "text/plain;charset=utf-8" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `live-transkript-${new Date().toISOString().slice(0, 10)}.txt`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const handleOpenInMainAnalysis = () => {
+    if (!liveReportResult) return
+    let audioFile: File | undefined = undefined
+    if (recordedAudioBlob) {
+      audioFile = new File([recordedAudioBlob], `live-recording-${Date.now()}.webm`, {
+        type: recordedAudioBlob.type || "audio/webm"
+      })
+    }
+    setShowReportModal(false)
+    onOpenInAnalysis?.(liveReportResult, audioFile)
+  }
+
+  // Calculate Rhetoric Score (0-100)
+  const calculateRhetoricScore = (res: Result) => {
+    const fillerPenalty = Math.min(60, res.relativeRate * 8)
+    const wpm = res.totalWords > 0 ? Math.round((res.totalWords / res.duration) * 60) : 130
+    let tempoPenalty = 0
+    if (wpm < 100) tempoPenalty = (100 - wpm) * 0.4
+    else if (wpm > 175) tempoPenalty = (wpm - 175) * 0.4
+    const score = Math.max(10, Math.min(100, Math.round(100 - fillerPenalty - tempoPenalty)))
+    return score
+  }
+
+  // Highlight filler words inside transcript text
+  const renderHighlightedTranscript = (text: string) => {
+    if (!text) return <em>Kein Text gesprochen</em>
+    const wordsInText = text.split(/(\s+)/)
+    return wordsInText.map((chunk, idx) => {
+      const cleanChunk = chunk.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "")
+      const isFiller = cleanChunk && words.some((w) => {
+        const norm = w.toLowerCase().trim()
+        if (cleanChunk === norm) return true
+        if (norm.length > 3 && cleanChunk.startsWith(norm)) return true
+        if (norm === "äh" && ["äh", "ä", "ah", "aeh", "eh", "er", "öh"].includes(cleanChunk)) return true
+        if (norm === "ähm" && ["ähm", "em", "mm", "hm", "hmm", "öhm", "ehm"].includes(cleanChunk)) return true
+        return false
+      })
+
+      if (isFiller) {
+        return (
+          <mark key={idx} className="live-transcript-filler-mark">
+            {chunk}
+          </mark>
+        )
+      }
+      return <span key={idx}>{chunk}</span>
+    })
+  }
+
+  const hasActivity = elapsedSeconds > 0 || liveTranscript.length > 0 || liveCount > 0
+
   return (
     <section className="live-studio-view">
       <div className="live-studio-header">
         <div className="live-studio-header-titles">
-          <span className="eyebrow">ECHTZEIT-SPRECHFLUSS-TRAINER</span>
-          <h1>🔴 Live Studio — <em>Präsentation live üben</em></h1>
-          <p className="intro-copy">Sprich frei ins Mikrofon. Füllwörter werden live gezählt, Wave & Tempo getracked.</p>
+          <span className="eyebrow">ECHTZEIT-SPRECHFLUSS-TRAINER & AUFNAHME</span>
+          <h1>🔴 Live Studio — <em>Präsentation live üben & aufzeichnen</em></h1>
+          <p className="intro-copy">Sprich frei ins Mikrofon. Füllwörter werden live gezählt, die Stimme aufgezeichnet und nach der Session als Report ausgewertet.</p>
         </div>
         <div className="live-header-status-badge">
           <span className={isListening ? "live-mic-dot recording" : "live-mic-dot"} />
-          <b>{isListening ? "LIVE-ERKENNUNG AKTIV" : "BEREIT"}</b>
+          <b>{isListening ? "LIVE-AUFNAHME AKTIV" : hasActivity ? "PAUSIERT" : "BEREIT"}</b>
         </div>
       </div>
 
@@ -2794,21 +3178,28 @@ function LiveStudio({ words }: { words: string[] }) {
 
             <div className="live-status-indicator">
               <span className={isListening ? "live-mic-dot recording" : "live-mic-dot"} />
-              <span>{isListening ? "Mikrofon aktiv" : "Standby"}</span>
+              <span>{isListening ? "Mikrofon nimmt auf..." : hasActivity ? "Aufnahme pausiert" : "Standby"}</span>
             </div>
           </div>
 
           <div className="live-controls">
             {!isListening ? (
               <button type="button" className="live-start-button" onClick={startListening}>
-                <span>🎙️ Starten</span>
+                <span>{hasActivity ? "▶️ Fortsetzen" : "🎙️ Starten"}</span>
               </button>
             ) : (
               <button type="button" className="live-stop-button" onClick={stopListening}>
                 <span>⏸️ Pause</span>
               </button>
             )}
-            <button type="button" className="history-clear-button" onClick={resetLiveSession}>
+
+            {hasActivity && (
+              <button type="button" className="live-finish-button" onClick={finishSessionAndShowReport} title="Session beenden und detaillierten Report öffnen">
+                <span>🏁 Auswerten</span>
+              </button>
+            )}
+
+            <button type="button" className="history-clear-button" onClick={resetLiveSession} title="Zurücksetzen">
               Zurücksetzen
             </button>
           </div>
@@ -2878,8 +3269,142 @@ function LiveStudio({ words }: { words: string[] }) {
           </div>
         </div>
       </div>
+
+      {/* POST-SESSION LIVE REPORT MODAL */}
+      {showReportModal && liveReportResult && (
+        <div className="live-report-modal-backdrop" onClick={() => setShowReportModal(false)}>
+          <div className="live-report-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="live-report-header">
+              <div className="live-report-header-text">
+                <span className="eyebrow">TRAININGS-AUSWERTUNG</span>
+                <h2>🎉 Live-Session Report</h2>
+                <p className="live-report-meta">
+                  Aufnahme vom {new Date().toLocaleDateString("de-DE")} um {new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} Uhr • Dauer: <b>{formatTimestamp(liveReportResult.duration)} min</b>
+                </p>
+              </div>
+              <button type="button" className="live-modal-close" onClick={() => setShowReportModal(false)} title="Schließen">
+                ✕
+              </button>
+            </div>
+
+            {/* Score & KPI Summary Cards */}
+            <div className="live-report-summary-cards">
+              <div className="live-report-score-card">
+                <div className="live-score-number">{calculateRhetoricScore(liveReportResult)}</div>
+                <div className="live-score-label">
+                  <b>Rhetorik-Score</b>
+                  <span>
+                    {calculateRhetoricScore(liveReportResult) >= 85
+                      ? "🟢 Exzellent & flüssig"
+                      : calculateRhetoricScore(liveReportResult) >= 70
+                      ? "🟡 Guter Vortrag mit kleinen Pausen"
+                      : calculateRhetoricScore(liveReportResult) >= 50
+                      ? "🟠 Leicht unruhig"
+                      : "🔴 Hoher Füllwort-Anteil"}
+                  </span>
+                </div>
+              </div>
+
+              <div className="live-report-kpi-grid">
+                <div className="live-kpi-box">
+                  <span className="live-kpi-label">Füllwörter gesamt</span>
+                  <span className="live-kpi-val highlight">{liveReportResult.fillerWords}</span>
+                </div>
+                <div className="live-kpi-box">
+                  <span className="live-kpi-label">Füllwort-Quote</span>
+                  <span className="live-kpi-val">{liveReportResult.relativeRate.toFixed(1)} %</span>
+                </div>
+                <div className="live-kpi-box">
+                  <span className="live-kpi-label">Gesprochene Wörter</span>
+                  <span className="live-kpi-val">{liveReportResult.totalWords}</span>
+                </div>
+                <div className="live-kpi-box">
+                  <span className="live-kpi-label">Durchschn. Tempo</span>
+                  <span className="live-kpi-val">
+                    {liveReportResult.totalWords > 0 ? Math.round((liveReportResult.totalWords / liveReportResult.duration) * 60) : 0} WPM
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Audio Recording Playback & Download */}
+            {recordedAudioUrl && (
+              <div className="live-audio-player-box">
+                <div className="live-audio-player-title">
+                  <span>🎙️ Deine Audio-Aufnahme</span>
+                  <a
+                    href={recordedAudioUrl}
+                    download={`live-training-${new Date().toISOString().slice(0, 10)}.webm`}
+                    className="live-audio-download-btn"
+                  >
+                    💾 Audio herunterladen (.webm)
+                  </a>
+                </div>
+                <audio controls src={recordedAudioUrl} className="live-native-audio-player" />
+              </div>
+            )}
+
+            {/* Füllwörter Breakdown */}
+            <div className="live-report-breakdown-box">
+              <div className="live-section-title">FÜLLWORT-VERTEILUNG</div>
+              <div className="live-report-words-chips">
+                {words.map((w) => {
+                  const count = liveReportResult.counts[w] || 0
+                  return (
+                    <div key={w} className={count > 0 ? "live-chip active" : "live-chip"}>
+                      <span className="live-chip-word">„{w}“</span>
+                      <span className="live-chip-count">{count}x</span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Transcript with Highlights */}
+            <div className="live-report-transcript-box">
+              <div className="live-section-title">
+                <span>VOLLSTÄNDIGES TRANSKRIPT</span>
+                <button type="button" className="live-txt-download-btn" onClick={handleDownloadTxt}>
+                  💾 als .txt speichern
+                </button>
+              </div>
+              <div className="live-report-transcript-content">
+                {renderHighlightedTranscript(liveReportResult.text)}
+              </div>
+            </div>
+
+            {/* Actions Bar */}
+            <div className="live-report-actions">
+              <button
+                type="button"
+                className="live-report-primary-btn"
+                onClick={handleOpenInMainAnalysis}
+                title="Detaillierte Charts, PDF-Export & KI-Tipps in der Haupt-Analyse öffnen"
+              >
+                📊 In Haupt-Analyse öffnen
+              </button>
+
+              <button type="button" className="live-report-secondary-btn" onClick={handleCopyReport}>
+                {copiedReport ? "✓ In Zwischenablage kopiert!" : "📋 Report kopieren"}
+              </button>
+
+              <button
+                type="button"
+                className="live-report-secondary-btn"
+                onClick={() => {
+                  setShowReportModal(false)
+                  resetLiveSession()
+                }}
+              >
+                🔄 Neues Training starten
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   )
 }
 
 export default App
+
