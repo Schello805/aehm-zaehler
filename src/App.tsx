@@ -194,36 +194,39 @@ function App() {
       return
     }
 
+    let isMounted = true
     let playerInstance: any = null
-    const initPlayer = () => {
+
+    const connectPlayer = () => {
+      if (!isMounted) return
       if (window.YT && window.YT.Player) {
         try {
-          playerInstance = new window.YT.Player('youtube-sync-iframe', {
-            videoId: activeYoutubeId,
-            playerVars: {
-              enablejsapi: 1,
-              rel: 0,
-              modestbranding: 1,
-            },
-            events: {
-              onReady: (event: any) => {
-                setYtPlayer(event.target)
+          const el = document.getElementById('youtube-sync-iframe')
+          if (el) {
+            playerInstance = new window.YT.Player('youtube-sync-iframe', {
+              events: {
+                onReady: (event: any) => {
+                  if (isMounted) setYtPlayer(event.target)
+                },
               },
-            },
-          })
+            })
+          }
         } catch (err) {
-          console.warn('YouTube Player Init:', err)
+          console.warn('YouTube Player Connect:', err)
         }
       }
     }
 
+    const timer = setTimeout(connectPlayer, 150)
     if (window.YT && window.YT.Player) {
-      initPlayer()
+      connectPlayer()
     } else {
-      window.onYouTubeIframeAPIReady = () => initPlayer()
+      window.onYouTubeIframeAPIReady = connectPlayer
     }
 
     return () => {
+      isMounted = false
+      clearTimeout(timer)
       if (playerInstance && typeof playerInstance.destroy === 'function') {
         try { playerInstance.destroy() } catch {}
       }
@@ -246,7 +249,17 @@ function App() {
         ytPlayer.seekTo(target, true)
         if (typeof ytPlayer.playVideo === 'function') ytPlayer.playVideo()
       } catch {}
-    } else if (playbackRef.current) {
+    } else {
+      const iframe = document.getElementById('youtube-sync-iframe') as HTMLIFrameElement | null
+      if (iframe && iframe.contentWindow) {
+        try {
+          iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [target, true] }), '*')
+          iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*')
+        } catch {}
+      }
+    }
+
+    if (playbackRef.current) {
       playbackRef.current.currentTime = target
       void playbackRef.current.play()
     }
@@ -406,37 +419,45 @@ function App() {
 
   const detectedCrutchWords = useMemo(() => {
     if (!result?.text) return []
-    const knownCrutches = [
-      'quasi', 'sozusagen', 'im endeffekt', 'eigentlich', 'halt',
-      'irgendwie', 'genau', 'sprich', 'sag ich mal', 'wie gesagt',
-      'im prinzip', 'auf jeden fall', 'letzten endes', 'praktisch',
-      'schlussendlich', 'gewissermaßen', 'tatsächlich', 'wortwörtlich'
+    // Curated list of genuine German verbal crutches & rhetorical filler phrases (Floskeln)
+    const genuineCrutches = [
+      'quasi',
+      'sozusagen',
+      'im endeffekt',
+      'eigentlich',
+      'halt',
+      'irgendwie',
+      'sprich',
+      'sag ich mal',
+      'wie gesagt',
+      'im prinzip',
+      'auf jeden fall',
+      'letzten endes',
+      'praktisch',
+      'schlussendlich',
+      'gewissermaßen',
+      'tatsächlich',
+      'wortwörtlich',
+      'am ende des tages',
+      'im grunde',
+      'genau genommen',
+      'schlichtweg',
+      'so nach dem motto',
+      'ich sag mal',
+      'so ungefähr',
+      'ehrlich gesagt',
+      'mehr oder weniger',
+      'im wesentlichen',
+      'überhaupt'
     ]
+
     const currentWordsLower = new Set(words.map((w) => w.trim().toLowerCase()))
     const foundList: { word: string; count: number; isUnlisted: boolean }[] = []
 
-    for (const crutch of knownCrutches) {
+    for (const crutch of genuineCrutches) {
       const count = countWordOccurrences(result.text, crutch)
-      if (count >= 2) {
-        foundList.push({ word: crutch, count, isUnlisted: !currentWordsLower.has(crutch) })
-      }
-    }
-
-    const stopWords = new Set([
-      'aber', 'alle', 'allem', 'allen', 'aller', 'alles', 'auch', 'beim', 'dann', 'dass', 'dein', 'dem', 'den', 'denn', 'der', 'des', 'doch', 'durch', 'eine', 'einem', 'einen', 'einer', 'eines', 'habe', 'haben', 'hatte', 'hier', 'ihre', 'ihrer', 'nach', 'nicht', 'noch', 'oder', 'sehr', 'sein', 'seine', 'seiner', 'sich', 'sind', 'über', 'unter', 'viel', 'viele', 'wenn', 'wieder', 'wird', 'wurde', 'kann', 'können', 'schon', 'mehr', 'immer', 'jetzt', 'dies', 'diese', 'dieser', 'dieses'
-    ])
-
-    const tokens = result.text.toLocaleLowerCase('de-DE').match(/[\p{L}\p{N}]+/gu) || []
-    const freqMap: Record<string, number> = {}
-    for (const t of tokens) {
-      if (t.length >= 4 && !stopWords.has(t) && !knownCrutches.includes(t)) {
-        freqMap[t] = (freqMap[t] || 0) + 1
-      }
-    }
-
-    for (const [w, count] of Object.entries(freqMap)) {
-      if (count >= 4 && !currentWordsLower.has(w)) {
-        foundList.push({ word: w, count, isUnlisted: true })
+      if (count >= 1 && !currentWordsLower.has(crutch)) {
+        foundList.push({ word: crutch, count, isUnlisted: true })
       }
     }
 
@@ -1167,7 +1188,14 @@ function App() {
                     <div className="youtube-player-card">
                       <div className="section-label">📺 YouTube Sync-Player (Klick auf Transkript springt im Video)</div>
                       <div className="youtube-player-wrap">
-                        <div id="youtube-sync-iframe" />
+                        <iframe
+                          id="youtube-sync-iframe"
+                          key={activeYoutubeId}
+                          src={`https://www.youtube-nocookie.com/embed/${activeYoutubeId}?enablejsapi=1&version=3&rel=0&autoplay=0`}
+                          title="YouTube Sync Video"
+                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                          allowFullScreen
+                        />
                       </div>
                     </div>
                   )}
