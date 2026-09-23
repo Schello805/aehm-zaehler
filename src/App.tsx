@@ -271,6 +271,49 @@ function App() {
     })
   }
 
+  const addNewSpeaker = () => {
+    if (!result) return
+    const currentSpeakers = result.speakers && Object.keys(result.speakers).length > 0
+      ? { ...result.speakers }
+      : {
+          speaker_1: {
+            id: 'speaker_1',
+            name: 'Sprecher 1',
+            color: '#3b82f6',
+            totalWords: result.totalWords || 0,
+            fillerWords: result.fillerWords || 0,
+            baseFillerWords: result.fillerWords || 0,
+            relativeRate: result.relativeRate || 0,
+            duration: result.duration || 0,
+            wpm: 0,
+            counts: { ...(result.counts || {}) }
+          }
+        }
+    const count = Object.keys(currentSpeakers).length
+    const nextIdx = count + 1
+    const newId = `speaker_${nextIdx}`
+    const colors = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ec4899', '#06b6d4']
+    const newSpeaker: SpeakerStats = {
+      id: newId,
+      name: `Sprecher ${nextIdx}`,
+      color: colors[(nextIdx - 1) % colors.length],
+      totalWords: 0,
+      fillerWords: 0,
+      baseFillerWords: 0,
+      relativeRate: 0,
+      duration: 0,
+      wpm: 0,
+      counts: Object.fromEntries(words.map((w) => [w, 0]))
+    }
+    setResult({
+      ...result,
+      speakers: {
+        ...currentSpeakers,
+        [newId]: newSpeaker
+      }
+    })
+  }
+
   const fileInputRef = useRef<HTMLInputElement>(null)
   const playbackRef = useRef<HTMLAudioElement>(null)
   const analysisControllerRef = useRef<AbortController | null>(null)
@@ -2072,19 +2115,46 @@ ${advice.summary}
                     )
                   })()}
 
-                  {/* 👥 Sprecher-Analyse & Vergleich */}
-                  {result.speakers && Object.keys(result.speakers).length > 1 && (() => {
-                    const spList = Object.values(result.speakers)
+                  {/* 👥 Sprecher-Analyse & Trennung */}
+                  {result && (() => {
+                    const spList = result.speakers && Object.keys(result.speakers).length > 0
+                      ? Object.values(result.speakers)
+                      : [
+                          {
+                            id: 'speaker_1',
+                            name: 'Sprecher 1',
+                            color: '#3b82f6',
+                            totalWords: result.totalWords || 0,
+                            fillerWords: result.fillerWords || 0,
+                            baseFillerWords: result.fillerWords || 0,
+                            relativeRate: result.relativeRate || 0,
+                            duration: result.duration || 0,
+                            wpm: result.duration > 0 ? Math.round(((result.totalWords || 0) / (result.duration / 60))) : 0,
+                            counts: result.counts || {},
+                          }
+                        ]
                     const totalFillers = Math.max(1, result.fillerWords)
 
                     return (
                       <div className="speakers-analysis-card">
                         <div className="speakers-header">
                           <div>
-                            <div className="section-label">👥 Sprecher-Analyse & Vergleich</div>
-                            <p className="speakers-subtext">Automatische Stimm- & Namenserkennung. Klicke auf ✎ zum Umbenennen.</p>
+                            <div className="section-label">👥 Sprecher-Analyse & Trennung</div>
+                            <p className="speakers-subtext">Automatische Erkennung. Klicke auf ✎ zum Umbenennen oder weise Abschnitte zu.</p>
                           </div>
-                          <span className="speakers-count-badge">{spList.length} Sprecher erkannt</span>
+                          <div className="speakers-header-actions">
+                            <span className="speakers-count-badge">
+                              {spList.length === 1 ? '1 Sprecher' : `${spList.length} Sprecher`}
+                            </span>
+                            <button
+                              type="button"
+                              className="add-speaker-btn"
+                              onClick={addNewSpeaker}
+                              title="Weiteren Sprecher für Interviews / Co-Hosts hinzufügen"
+                            >
+                              + Sprecher hinzufügen
+                            </button>
+                          </div>
                         </div>
 
                         {/* Speaker Cards Grid */}
@@ -2198,24 +2268,19 @@ ${advice.summary}
 
                   <div className="waveform-bar-card sniper-card">
                     <div className="timeline-header-flex">
-                      <div className="section-label">🎯 Füllwort- & Pausen-Sniper</div>
+                      <div className="sniper-title-group">
+                        <span className="section-label">🎯 Füllwort- & Pausen-Sniper</span>
+                      </div>
                       <div className="sniper-header-pills">
-                        {fillerSegments.length > 0 && (
-                          <span className="sniper-status-pill filler">
-                            🔴 Füllwort {currentFillerIndex >= 0 ? currentFillerIndex + 1 : 0}/{fillerSegments.length}
-                          </span>
-                        )}
-                        {pauseSegments.length > 0 && (
-                          <span className="sniper-status-pill pause">
-                            ⏱️ Pause {currentPauseIndex >= 0 ? currentPauseIndex + 1 : 0}/{pauseSegments.length}
-                          </span>
-                        )}
                         {currentMediaTitle && (
                           <div className="media-pill-tag" title={currentMediaTitle}>
                             <span className="pill-dot">●</span>
                             <span className="pill-text">{currentMediaTitle}</span>
                           </div>
                         )}
+                        <span className="sniper-summary-tag">
+                          {fillerSegments.length} Füllwörter {pauseSegments.length > 0 ? `· ${pauseSegments.length} Pausen` : ''}
+                        </span>
                       </div>
                     </div>
 

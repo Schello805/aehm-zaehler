@@ -319,7 +319,7 @@ const performSpeakerDiarization = (rawSegments, words) => {
   let isMultiSpeaker = false
 
   const turnMarkers = [
-    /^(?:ja|nein|genau|stimmt|absolut|danke|hallo|guten tag|servus|moin|auf jeden fall|interessant|frage an|was meinst du|wie siehst du)/i,
+    /^(?:ja|nein|genau|stimmt|absolut|danke|vielen dank|hallo|guten tag|guten morgen|guten abend|servus|moin|auf jeden fall|interessant|frage|was meinst du|wie siehst du|ich glaube|wir haben|übergebe|herzlich willkommen|schönen guten|okay|alles klar|richtig)/i,
     /(?:\?|\!)$/
   ]
 
@@ -342,7 +342,7 @@ const performSpeakerDiarization = (rawSegments, words) => {
       const prevHasQuestion = prevText.endsWith('?')
       const currentHasTurnCue = turnMarkers[0].test(segText)
       
-      if (gap >= 1.6 || (gap >= 0.8 && (prevHasQuestion || currentHasTurnCue))) {
+      if (gap >= 1.0 || (gap >= 0.4 && (prevHasQuestion || currentHasTurnCue))) {
         currentSpeakerIdx = currentSpeakerIdx === 0 ? 1 : 0
         speakerTurnCount++
         isMultiSpeaker = true
@@ -363,8 +363,8 @@ const performSpeakerDiarization = (rawSegments, words) => {
     })
   })
 
-  // If very few turns occurred and no second name detected, treat as single speaker
-  if (speakerTurnCount < 2 && detectedNames.length <= 1) {
+  // If no turns detected and only single name, keep single speaker
+  if (speakerTurnCount < 1 && detectedNames.length <= 1) {
     enrichedSegments.forEach((s) => {
       s.speakerId = 'speaker_1'
       s.speakerName = name1
