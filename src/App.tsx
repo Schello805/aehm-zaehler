@@ -94,6 +94,11 @@ const formatRemainingTime = (remainingSeconds: number) => {
 
 const formatTimestamp = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`
 
+const getYouTubeVideoId = (srcUrl: string): string | null => {
+  if (!srcUrl) return null
+  const match = srcUrl.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))([\w-]{11})/)
+  return match ? match[1] : null
+}
 
 const getOptimizationAdvice = (result: Result) => {
   const effectiveFillerWords = result.baseFillerWords ?? result.fillerWords
@@ -281,8 +286,30 @@ function App() {
       const vParam = params.get('v')
       const urlParam = params.get('url')
       const initial = urlParam || (vParam ? `https://www.youtube.com/watch?v=${vParam}` : '')
-      if (initial && !url) {
+      if (initial) {
         setUrl(initial)
+
+        // 1. Check if we already have this in local history
+        const initialYt = getYouTubeVideoId(initial)
+        const match = history.find((h) => {
+          if (h.source === initial) return true
+          const hYt = getYouTubeVideoId(h.source)
+          return initialYt && hYt && initialYt === hYt
+        })
+
+        if (match) {
+          setResult(match.result)
+          setActiveHistoryId(match.id)
+          setUrl(match.source)
+          setFile(null)
+          setView('analyse')
+          window.scrollTo({ top: 0, behavior: 'smooth' })
+        } else {
+          // 2. Automatically launch analysis (server cache will return result in <100ms if available)
+          setTimeout(() => {
+            analyze(initial)
+          }, 150)
+        }
       }
     } catch {}
 
@@ -301,12 +328,6 @@ function App() {
     }
     return url || ''
   }, [activeHistoryId, history, url])
-
-  const getYouTubeVideoId = (srcUrl: string): string | null => {
-    if (!srcUrl) return null
-    const match = srcUrl.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))([\w-]{11})/)
-    return match ? match[1] : null
-  }
 
   const activeYoutubeId = useMemo(() => getYouTubeVideoId(activeSourceUrl), [activeSourceUrl])
 
@@ -1034,8 +1055,9 @@ ${advice.summary}
     setResult(null)
   }
 
-  const analyze = async () => {
-    if (!file && !url) return
+  const analyze = async (overrideUrl?: string) => {
+    const targetUrl = typeof overrideUrl === 'string' ? overrideUrl : url
+    if (!file && !targetUrl) return
 
     const controller = new AbortController()
     analysisControllerRef.current = controller
@@ -1044,9 +1066,9 @@ ${advice.summary}
     setResult(null)
     setActiveHistoryId(null)
 
-    if (url) {
+    if (targetUrl) {
       try {
-        const newSearch = `?url=${encodeURIComponent(url)}`
+        const newSearch = `?url=${encodeURIComponent(targetUrl)}`
         if (window.location.search !== newSearch) {
           window.history.replaceState({}, '', `${window.location.pathname}${newSearch}`)
         }
@@ -1059,19 +1081,19 @@ ${advice.summary}
     setProgress({
       percent: 5,
       step: 0,
-      label: url ? 'Lade Video von YouTube...' : 'Audiodatei wird vorbereitet...',
+      label: targetUrl ? 'Lade Video von YouTube...' : 'Audiodatei wird vorbereitet...',
       remainingSeconds: initialRemaining,
     })
 
     const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     currentJobIdRef.current = jobId
-    console.log('[Analyze] Starting analysis with jobId:', jobId, { file: file?.name, url, words })
+    console.log('[Analyze] Starting analysis with jobId:', jobId, { file: file?.name, url: targetUrl, words })
 
     const body = new FormData()
     body.append('jobId', jobId)
     body.append('words', JSON.stringify(words))
     if (file) body.append('file', file)
-    if (url) body.append('url', url)
+    if (targetUrl) body.append('url', targetUrl)
 
     let isCompleted = false
     let pollerInterval: any = null
@@ -1115,6 +1137,10 @@ ${advice.summary}
           totalWords: data.totalWords || 0,
           relativeRate: data.relativeRate || 0,
           segments: data.segments || [],
+          speakers: data.speakers,
+          mediaTitle: data.mediaTitle,
+          pauseCount: data.pauseCount,
+          totalPauseSeconds: data.totalPauseSeconds,
         })
       }
 
@@ -1128,6 +1154,10 @@ ${advice.summary}
           totalWords: data.totalWords || 0,
           relativeRate: data.relativeRate || 0,
           segments: data.segments || [],
+          speakers: data.speakers,
+          mediaTitle: data.mediaTitle,
+          pauseCount: data.pauseCount,
+          totalPauseSeconds: data.totalPauseSeconds,
         }
 
         isCompleted = true
@@ -1136,7 +1166,7 @@ ${advice.summary}
         setResult(finalResult)
         setProgress({ percent: 100, step: progressSteps.length - 1, label: 'Ergebnis fertig', remainingSeconds: 0 })
 
-        const fallbackTitle = url || file?.name || 'Unbekannte Quelle'
+        const fallbackTitle = targetUrl || file?.name || 'Unbekannte Quelle'
         const historyEntry: HistoryEntry = {
           id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
           source: fallbackTitle,
@@ -1152,6 +1182,8 @@ ${advice.summary}
         setHistory((current) => [historyEntry, ...current].slice(0, 50))
         setActiveHistoryId(historyEntry.id)
         setIsAnalyzing(false)
+        setView('analyse')
+        window.scrollTo({ top: 0, behavior: 'smooth' })
       }
     }
 
@@ -1452,7 +1484,7 @@ ${advice.summary}
                 <textarea value={analysisNote} onChange={(event) => setAnalysisNote(event.target.value)} placeholder="Notiz zur Aufnahme (optional)" rows={2} />
               </div>
 
-              <button className="analyze-button" type="button" disabled={!isAnalyzing && (!file && !url)} onClick={isAnalyzing ? cancelAnalysis : analyze}>
+              <button className="analyze-button" type="button" disabled={!isAnalyzing && (!file && !url)} onClick={isAnalyzing ? cancelAnalysis : () => analyze()}>
                 <span className="button-label">{isAnalyzing ? 'Analyse abbrechen' : 'Analyse starten'}</span>
                 <span className="button-icon-wrap" aria-hidden="true">{isAnalyzing ? '×' : <span className="button-arrow">→</span>}</span>
               </button>
