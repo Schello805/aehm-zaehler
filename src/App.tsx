@@ -1055,6 +1055,25 @@ ${advice.summary}
     setResult(null)
   }
 
+  const resetToHome = () => {
+    setView('analyse')
+    setResult(null)
+    setActiveHistoryId(null)
+    setUrl('')
+    setFile(null)
+    setError('')
+    setAnalysisNote('')
+    setAnalysisTags('')
+    setFetchedMediaInfo(null)
+    setQueueInfo(null)
+    try {
+      if (window.location.search) {
+        window.history.replaceState({}, '', window.location.pathname)
+      }
+    } catch {}
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
   const analyze = async (overrideUrl?: string) => {
     const targetUrl = typeof overrideUrl === 'string' ? overrideUrl : url
     if (!file && !targetUrl) return
@@ -1328,7 +1347,7 @@ ${advice.summary}
   return (
     <main>
       <nav className="topbar">
-        <button className="brand" onClick={() => setView('analyse')} type="button">
+        <button className="brand" onClick={resetToHome} type="button" title="Zurück zur Startseite">
           <img className="brand-logo-img" src="/logo.png" alt="ähm-zähler Logo" />
           <span className="brand-title">ähm-zähler</span>
         </button>
