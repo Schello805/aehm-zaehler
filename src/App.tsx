@@ -2,7 +2,26 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import { defaultEstimatedAnalysisSeconds, getEstimatedAnalysisSeconds } from './progress'
 
+declare global {
+  interface Window {
+    YT?: any
+    onYouTubeIframeAPIReady?: () => void
+  }
+}
+
 const defaults = ['äh', 'ähm']
+
+const countWordOccurrences = (text: string, word: string) => {
+  const tokens = text.toLocaleLowerCase('de-DE').match(/[\p{L}\p{N}]+/gu) || []
+  const searchTokens = word.toLocaleLowerCase('de-DE').match(/[\p{L}\p{N}]+/gu) || []
+  if (!searchTokens.length) return 0
+
+  let matches = 0
+  for (let index = 0; index <= tokens.length - searchTokens.length; index += 1) {
+    if (searchTokens.every((token, offset) => tokens[index + offset] === token)) matches += 1
+  }
+  return matches
+}
 
 type Result = {
   counts: Record<string, number>
@@ -136,11 +155,80 @@ function App() {
   const [isCleaningAudio, setIsCleaningAudio] = useState(false)
   const [cleanAudioError, setCleanAudioError] = useState('')
   const [isSupercutActive, setIsSupercutActive] = useState(false)
+  const [ytPlayer, setYtPlayer] = useState<any>(null)
+  const [activePlayTime, setActivePlayTime] = useState(0)
+  const [supercutCurrentIndex, setSupercutCurrentIndex] = useState(0)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const playbackRef = useRef<HTMLAudioElement>(null)
   const analysisControllerRef = useRef<AbortController | null>(null)
   const playbackUrl = useMemo(() => (file ? URL.createObjectURL(file) : ''), [file])
+
+  const activeSourceUrl = useMemo(() => {
+    if (activeHistoryId) {
+      const entry = history.find((h) => h.id === activeHistoryId)
+      return entry?.source || url || ''
+    }
+    return url || ''
+  }, [activeHistoryId, history, url])
+
+  const getYouTubeVideoId = (srcUrl: string): string | null => {
+    if (!srcUrl) return null
+    const match = srcUrl.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))([\w-]{11})/)
+    return match ? match[1] : null
+  }
+
+  const activeYoutubeId = useMemo(() => getYouTubeVideoId(activeSourceUrl), [activeSourceUrl])
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && !window.YT) {
+      const tag = document.createElement('script')
+      tag.src = 'https://www.youtube.com/iframe_api'
+      document.body.appendChild(tag)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!activeYoutubeId) {
+      setYtPlayer(null)
+      return
+    }
+
+    let playerInstance: any = null
+    const initPlayer = () => {
+      if (window.YT && window.YT.Player) {
+        try {
+          playerInstance = new window.YT.Player('youtube-sync-iframe', {
+            videoId: activeYoutubeId,
+            playerVars: {
+              enablejsapi: 1,
+              rel: 0,
+              modestbranding: 1,
+            },
+            events: {
+              onReady: (event: any) => {
+                setYtPlayer(event.target)
+              },
+            },
+          })
+        } catch (err) {
+          console.warn('YouTube Player Init:', err)
+        }
+      }
+    }
+
+    if (window.YT && window.YT.Player) {
+      initPlayer()
+    } else {
+      window.onYouTubeIframeAPIReady = () => initPlayer()
+    }
+
+    return () => {
+      if (playerInstance && typeof playerInstance.destroy === 'function') {
+        try { playerInstance.destroy() } catch {}
+      }
+    }
+  }, [activeYoutubeId])
 
   const fillerSegments = useMemo(() => {
     if (!result?.segments) return []
@@ -150,36 +238,79 @@ function App() {
     })
   }, [result, words])
 
-  const jumpToFiller = (direction: 'next' | 'prev') => {
-    if (!playbackRef.current || !fillerSegments.length) return
-    const currentTime = playbackRef.current.currentTime
-    if (direction === 'next') {
-      const nextSeg = fillerSegments.find((seg) => seg.start > currentTime + 0.3) || fillerSegments[0]
-      playbackRef.current.currentTime = Math.max(0, nextSeg.start - 0.1)
-      void playbackRef.current.play()
-    } else {
-      const prevSegs = fillerSegments.filter((seg) => seg.start < currentTime - 0.5)
-      const prevSeg = prevSegs.length ? prevSegs[prevSegs.length - 1] : fillerSegments[fillerSegments.length - 1]
-      playbackRef.current.currentTime = Math.max(0, prevSeg.start - 0.1)
+  const seekAndPlay = (seconds: number) => {
+    const target = Math.max(0, seconds)
+    setActivePlayTime(target)
+    if (ytPlayer && typeof ytPlayer.seekTo === 'function') {
+      try {
+        ytPlayer.seekTo(target, true)
+        if (typeof ytPlayer.playVideo === 'function') ytPlayer.playVideo()
+      } catch {}
+    } else if (playbackRef.current) {
+      playbackRef.current.currentTime = target
       void playbackRef.current.play()
     }
   }
 
+  const jumpToFiller = (direction: 'next' | 'prev') => {
+    if (!fillerSegments.length) return
+    let currentTime = activePlayTime
+    if (ytPlayer && typeof ytPlayer.getCurrentTime === 'function') {
+      try { currentTime = ytPlayer.getCurrentTime() || activePlayTime } catch {}
+    } else if (playbackRef.current) {
+      currentTime = playbackRef.current.currentTime || activePlayTime
+    }
+
+    if (direction === 'next') {
+      const nextIndex = fillerSegments.findIndex((seg) => seg.start > currentTime + 0.3)
+      const idx = nextIndex !== -1 ? nextIndex : 0
+      setSupercutCurrentIndex(idx)
+      seekAndPlay(Math.max(0, fillerSegments[idx].start - 0.1))
+    } else {
+      const prevSegs = fillerSegments.filter((seg) => seg.start < currentTime - 0.5)
+      const idx = prevSegs.length ? fillerSegments.indexOf(prevSegs[prevSegs.length - 1]) : fillerSegments.length - 1
+      setSupercutCurrentIndex(idx)
+      seekAndPlay(Math.max(0, fillerSegments[idx].start - 0.1))
+    }
+  }
+
   useEffect(() => {
-    if (!isSupercutActive || !playbackRef.current || !fillerSegments.length) return
+    if (!isSupercutActive || !fillerSegments.length) return
+
+    let lastIndex = 0
+    setSupercutCurrentIndex(0)
+    seekAndPlay(Math.max(0, fillerSegments[0].start - 0.1))
 
     const interval = window.setInterval(() => {
-      if (!playbackRef.current || playbackRef.current.paused) return
-      const currentTime = playbackRef.current.currentTime
-      const currentSeg = fillerSegments.find((seg) => currentTime >= seg.start - 0.2 && currentTime <= seg.end + 0.3)
-      if (!currentSeg) {
-        const nextSeg = fillerSegments.find((seg) => seg.start > currentTime) || fillerSegments[0]
-        playbackRef.current.currentTime = Math.max(0, nextSeg.start - 0.1)
+      let currentTime = 0
+      let isPaused = true
+
+      if (ytPlayer && typeof ytPlayer.getCurrentTime === 'function') {
+        try {
+          currentTime = ytPlayer.getCurrentTime() || 0
+          const state = typeof ytPlayer.getPlayerState === 'function' ? ytPlayer.getPlayerState() : -1
+          isPaused = state !== 1 // 1 is PLAYING
+        } catch {}
+      } else if (playbackRef.current) {
+        currentTime = playbackRef.current.currentTime || 0
+        isPaused = playbackRef.current.paused
       }
-    }, 250)
+
+      if (isPaused) return
+      setActivePlayTime(currentTime)
+
+      const currentSeg = fillerSegments[lastIndex]
+      if (currentSeg && currentTime >= currentSeg.end + 0.35) {
+        const nextIndex = (lastIndex + 1) % fillerSegments.length
+        lastIndex = nextIndex
+        setSupercutCurrentIndex(nextIndex)
+        const nextSeg = fillerSegments[nextIndex]
+        seekAndPlay(Math.max(0, nextSeg.start - 0.1))
+      }
+    }, 120)
 
     return () => window.clearInterval(interval)
-  }, [isSupercutActive, fillerSegments])
+  }, [isSupercutActive, fillerSegments, ytPlayer])
 
   const downloadCleanAudio = async () => {
     if (!result) return
@@ -272,7 +403,45 @@ function App() {
   const activeSourceLabel = activeHistoryEntry
     ? (activeHistoryEntry.title || activeHistoryEntry.sourceLabel)
     : sourceLabel
-  const activeSourceUrl = activeHistoryEntry?.source || (url.startsWith('http') ? url : '')
+
+  const detectedCrutchWords = useMemo(() => {
+    if (!result?.text) return []
+    const knownCrutches = [
+      'quasi', 'sozusagen', 'im endeffekt', 'eigentlich', 'halt',
+      'irgendwie', 'genau', 'sprich', 'sag ich mal', 'wie gesagt',
+      'im prinzip', 'auf jeden fall', 'letzten endes', 'praktisch',
+      'schlussendlich', 'gewissermaßen', 'tatsächlich', 'wortwörtlich'
+    ]
+    const currentWordsLower = new Set(words.map((w) => w.trim().toLowerCase()))
+    const foundList: { word: string; count: number; isUnlisted: boolean }[] = []
+
+    for (const crutch of knownCrutches) {
+      const count = countWordOccurrences(result.text, crutch)
+      if (count >= 2) {
+        foundList.push({ word: crutch, count, isUnlisted: !currentWordsLower.has(crutch) })
+      }
+    }
+
+    const stopWords = new Set([
+      'aber', 'alle', 'allem', 'allen', 'aller', 'alles', 'auch', 'beim', 'dann', 'dass', 'dein', 'dem', 'den', 'denn', 'der', 'des', 'doch', 'durch', 'eine', 'einem', 'einen', 'einer', 'eines', 'habe', 'haben', 'hatte', 'hier', 'ihre', 'ihrer', 'nach', 'nicht', 'noch', 'oder', 'sehr', 'sein', 'seine', 'seiner', 'sich', 'sind', 'über', 'unter', 'viel', 'viele', 'wenn', 'wieder', 'wird', 'wurde', 'kann', 'können', 'schon', 'mehr', 'immer', 'jetzt', 'dies', 'diese', 'dieser', 'dieses'
+    ])
+
+    const tokens = result.text.toLocaleLowerCase('de-DE').match(/[\p{L}\p{N}]+/gu) || []
+    const freqMap: Record<string, number> = {}
+    for (const t of tokens) {
+      if (t.length >= 4 && !stopWords.has(t) && !knownCrutches.includes(t)) {
+        freqMap[t] = (freqMap[t] || 0) + 1
+      }
+    }
+
+    for (const [w, count] of Object.entries(freqMap)) {
+      if (count >= 4 && !currentWordsLower.has(w)) {
+        foundList.push({ word: w, count, isUnlisted: true })
+      }
+    }
+
+    return foundList.sort((a, b) => b.count - a.count).slice(0, 10)
+  }, [result?.text, words])
 
   const filteredHistory = useMemo(() => {
     const query = historyFilter.trim().toLowerCase()
@@ -720,7 +889,7 @@ function App() {
                     const maxCount = Math.max(...allCounts.map(([, c]) => c))
                     return (
                       <div className="word-cloud-card">
-                        <div className="section-label">☁️ Wort-Wolke</div>
+                        <div className="section-label">☁️ Wort-Wolke (Deine Suchwörter)</div>
                         <div className="word-cloud">
                           {allCounts
                             .sort(([, a], [, b]) => b - a)
@@ -744,6 +913,39 @@ function App() {
                     )
                   })()}
 
+                  {/* Automatic Crutch Words & Repetitive Phrases Detector */}
+                  {detectedCrutchWords.length > 0 && (
+                    <div className="crutch-words-card">
+                      <div className="section-label">🔄 Automatisch erkannte Floskeln & Wiederholungen</div>
+                      <p style={{ fontSize: '11px', color: 'var(--muted)', margin: '4px 0 8px' }}>
+                        Diese Wörter/Floskeln wurden im Text besonders häufig verwendet. Füge sie mit einem Klick zu deiner Suchliste hinzu:
+                      </p>
+                      <div className="crutch-list">
+                        {detectedCrutchWords.map((item) => (
+                          <div key={item.word} className="crutch-chip">
+                            <span>„{item.word}“</span>
+                            <strong>{item.count}×</strong>
+                            {item.isUnlisted && (
+                              <button
+                                type="button"
+                                title="Zu meinen Suchwörtern hinzufügen"
+                                onClick={() => {
+                                  if (!words.includes(item.word)) {
+                                    const updated = [...words, item.word]
+                                    setWords(updated)
+                                    localStorage.setItem('fill-words', JSON.stringify(updated))
+                                  }
+                                }}
+                              >
+                                + Merken
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Heatmap Timeline */}
                   {(() => {
                     if (!result.segments || !result.duration) return null
@@ -760,7 +962,7 @@ function App() {
                     const maxBucket = Math.max(1, ...buckets.map((b) => b.count))
                     return (
                       <div className="heatmap-card">
-                        <div className="section-label">🗺️ Heatmap-Timeline — Füllwörter über Zeit</div>
+                        <div className="section-label">🗺️ Heatmap-Timeline — Füllwörter über Zeit (Klick zum Abspielen)</div>
                         <div className="heatmap-strip" aria-label="Füllwort-Heatmap">
                           {buckets.map((bucket, i) => {
                             const intensity = bucket.count / maxBucket
@@ -772,12 +974,8 @@ function App() {
                                 key={i}
                                 className="heatmap-cell"
                                 style={{ background: `hsl(${hue}, ${sat}%, ${light}%)` }}
-                                title={`${formatTimestamp(bucket.t0)} — ${bucket.count} Füllwort${bucket.count !== 1 ? 'er' : ''}`}
-                                onClick={() => {
-                                  if (!playbackRef.current) return
-                                  playbackRef.current.currentTime = bucket.t0
-                                  void playbackRef.current.play()
-                                }}
+                                title={`${formatTimestamp(bucket.t0)} — ${bucket.count} Füllwort${bucket.count !== 1 ? 'er' : ''} (Klicken zum Anhören)`}
+                                onClick={() => seekAndPlay(bucket.t0)}
                               />
                             )
                           })}
@@ -792,18 +990,16 @@ function App() {
                   })()}
 
                   <div className="waveform-bar-card">
-
                     <div className="section-label">Interaktive Füllwort-Timeline & Player</div>
                     <div
                       className="waveform-timeline"
                       title="Klicke auf eine Stelle, um dorthin zu springen"
                       onClick={(e) => {
-                        if (!playbackRef.current || !result?.duration) return
+                        if (!result?.duration) return
                         const rect = e.currentTarget.getBoundingClientRect()
                         const clickX = e.clientX - rect.left
                         const ratio = Math.max(0, Math.min(1, clickX / rect.width))
-                        playbackRef.current.currentTime = ratio * result.duration
-                        void playbackRef.current.play()
+                        seekAndPlay(ratio * result.duration)
                       }}
                     >
                       <div className="timeline-track" />
@@ -826,7 +1022,7 @@ function App() {
                         type="button"
                         className="player-control-button"
                         onClick={() => jumpToFiller('prev')}
-                        disabled={!fillerSegments.length || !file}
+                        disabled={!fillerSegments.length}
                       >
                         ⏮️ Vorheriges Füllwort
                       </button>
@@ -834,7 +1030,7 @@ function App() {
                         type="button"
                         className="player-control-button"
                         onClick={() => jumpToFiller('next')}
-                        disabled={!fillerSegments.length || !file}
+                        disabled={!fillerSegments.length}
                       >
                         ⏭️ Nächstes Füllwort
                       </button>
@@ -842,12 +1038,26 @@ function App() {
                         type="button"
                         className={isSupercutActive ? 'player-control-button active' : 'player-control-button'}
                         onClick={() => setIsSupercutActive(!isSupercutActive)}
-                        disabled={!fillerSegments.length || !file}
+                        disabled={!fillerSegments.length}
                       >
                         🎧 {isSupercutActive ? 'Supercut beenden' : 'Füllwort-Supercut abspielen'}
                       </button>
                     </div>
+                    {isSupercutActive && fillerSegments.length > 0 && (
+                      <div className="supercut-badge">
+                        ⚡ Supercut läuft: Füllwort {supercutCurrentIndex + 1} von {fillerSegments.length}
+                      </div>
+                    )}
                   </div>
+
+                  {activeYoutubeId && (
+                    <div className="youtube-player-card">
+                      <div className="section-label">📺 YouTube Sync-Player (Klick auf Transkript springt im Video)</div>
+                      <div className="youtube-player-wrap">
+                        <div id="youtube-sync-iframe" />
+                      </div>
+                    </div>
+                  )}
 
                   <div className="eraser-card">
                     <div className="eraser-header">
@@ -869,19 +1079,16 @@ function App() {
                   </div>
 
                   <div className="transcript-card">
-                    <div className="section-label">Transkript mit Zeitstempeln</div>
+                    <div className="section-label">Transkript mit Zeitstempeln (Klicken zum Anhören)</div>
                     {file && <audio className="playback" ref={playbackRef} src={playbackUrl} controls />}
                     <div className="transcript-list">
                       {(result.segments || []).map((segment) => (
-                        <button className="transcript-segment" type="button" key={`${segment.start}-${segment.end}`} onClick={() => {
-                          if (activeSourceUrl.startsWith('http')) {
-                            const separator = activeSourceUrl.includes('?') ? '&' : '?'
-                            window.open(`${activeSourceUrl}${separator}t=${Math.floor(segment.start)}s`, '_blank', 'noopener,noreferrer')
-                          } else if (playbackRef.current) {
-                            playbackRef.current.currentTime = segment.start
-                            void playbackRef.current.play()
-                          }
-                        }}>
+                        <button
+                          className="transcript-segment"
+                          type="button"
+                          key={`${segment.start}-${segment.end}`}
+                          onClick={() => seekAndPlay(segment.start)}
+                        >
                           <span>{formatTimestamp(segment.start)}</span>
                           <strong>{segment.text}</strong>
                         </button>

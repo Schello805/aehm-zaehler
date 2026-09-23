@@ -942,6 +942,94 @@ h2 {
   line-height: 1.4;
 }
 
+.youtube-player-card {
+  margin: 12px 0;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.youtube-player-wrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  max-height: 340px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #000;
+  margin-top: 8px;
+}
+
+.youtube-player-wrap iframe,
+.youtube-player-wrap div {
+  width: 100% !important;
+  height: 100% !important;
+  border: 0;
+}
+
+.supercut-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  font-size: 11px;
+  font-weight: 600;
+  margin-top: 8px;
+  animation: pulse 1.5s infinite;
+}
+
+.crutch-words-card {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+
+.crutch-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.crutch-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.crutch-chip strong {
+  color: var(--primary, #3b82f6);
+}
+
+.crutch-chip button {
+  border: 0;
+  background: rgba(59, 130, 246, 0.12);
+  color: var(--primary, #3b82f6);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.crutch-chip button:hover {
+  background: var(--primary, #3b82f6);
+  color: #fff;
+}
+
 .timeline-label {
   display: flex;
   justify-content: space-between;
