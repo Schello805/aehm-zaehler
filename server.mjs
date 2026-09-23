@@ -75,6 +75,84 @@ const isValidHttpUrl = (urlString) => {
   }
 }
 
+// Result Cache for lightning-fast repeat requests
+const analysisResultCache = new Map()
+const MAX_CACHE_ENTRIES = 200
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000 // 24 hours
+
+const getCacheKey = (url, words) => {
+  if (!url) return null
+  const normalizedUrl = String(url).trim().toLowerCase()
+  const normalizedWords = [...words].map((w) => String(w).trim().toLowerCase()).sort().join(',')
+  return `${normalizedUrl}:::${normalizedWords}`
+}
+
+const getFromCache = (url, words) => {
+  const key = getCacheKey(url, words)
+  if (!key) return null
+  const entry = analysisResultCache.get(key)
+  if (!entry) return null
+  if (Date.now() - entry.cachedAt > CACHE_TTL_MS) {
+    analysisResultCache.delete(key)
+    return null
+  }
+  return entry.result
+}
+
+const saveToCache = (url, words, result) => {
+  const key = getCacheKey(url, words)
+  if (!key || !result) return
+  if (analysisResultCache.size >= MAX_CACHE_ENTRIES) {
+    const oldestKey = analysisResultCache.keys().next().value
+    if (oldestKey) analysisResultCache.delete(oldestKey)
+  }
+  analysisResultCache.set(key, { result, cachedAt: Date.now() })
+}
+
+const parsePodcastRss = (xmlText) => {
+  try {
+    const channelTitleMatch = xmlText.match(/<channel[\s\S]*?<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/i)
+    const channelTitle = channelTitleMatch ? channelTitleMatch[1].trim() : ''
+
+    const itemMatch = xmlText.match(/<item[\s\S]*?<\/item>/i)
+    if (!itemMatch) return null
+
+    const itemXml = itemMatch[0]
+    const itemTitleMatch = itemXml.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/i)
+    const itemTitle = itemTitleMatch ? itemTitleMatch[1].trim() : 'Podcast Episode'
+
+    const enclosureMatch = itemXml.match(/<enclosure[^>]*url=["']([^"']+)["'][^>]*>/i)
+    const audioUrl = enclosureMatch ? enclosureMatch[1].trim() : null
+
+    const durationMatch = itemXml.match(/<itunes:duration>([^<]+)<\/itunes:duration>/i)
+    let duration = 0
+    if (durationMatch) {
+      const durStr = durationMatch[1].trim()
+      if (durStr.includes(':')) {
+        const parts = durStr.split(':').map(Number)
+        if (parts.length === 3) duration = parts[0] * 3600 + parts[1] * 60 + parts[2]
+        else if (parts.length === 2) duration = parts[0] * 60 + parts[1]
+      } else {
+        duration = Number(durStr) || 0
+      }
+    }
+
+    const imageMatch = itemXml.match(/<itunes:image[^>]*href=["']([^"']+)["']/i) || xmlText.match(/<image[\s\S]*?<url>([^<]+)<\/url>/i)
+    const thumbnail = imageMatch ? imageMatch[1].trim() : ''
+
+    return {
+      title: itemTitle,
+      uploader: channelTitle || 'Podcast',
+      duration,
+      thumbnail,
+      audioUrl,
+    }
+  } catch (e) {
+    console.warn('[podcast] RSS parse note:', e?.message)
+    return null
+  }
+}
+
 const getUrlMetadata = async (url) => {
   if (!isValidHttpUrl(url)) {
     throw new Error('Ungültige oder nicht erlaubte URL.')
@@ -84,8 +162,44 @@ const getUrlMetadata = async (url) => {
   let uploader = ''
   let duration = 0
   let thumbnail = ''
+  let directAudioUrl = ''
 
-  // Fast oEmbed for YouTube
+  const lowerUrl = url.toLowerCase()
+
+  // 1. Direct Audio File (.mp3, .wav, .m4a, .aac, .ogg, .flac)
+  if (/\.(mp3|wav|m4a|aac|ogg|flac)(\?.*)?$/i.test(lowerUrl)) {
+    const filename = url.split('/').pop()?.split('?')[0] || 'Audiodatei'
+    title = decodeURIComponent(filename)
+    uploader = new URL(url).hostname
+    directAudioUrl = url
+    return { title, uploader, duration: 0, thumbnail: '', directAudioUrl }
+  }
+
+  // 2. Podcast RSS Feed (.xml, .rss, /feed, /podcast)
+  if (lowerUrl.includes('.rss') || lowerUrl.includes('.xml') || lowerUrl.includes('/feed') || lowerUrl.includes('podcast')) {
+    try {
+      const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(5000) })
+      if (res.ok) {
+        const text = await res.text()
+        if (text.includes('<rss') || text.includes('<channel')) {
+          const podcastInfo = parsePodcastRss(text)
+          if (podcastInfo && podcastInfo.audioUrl) {
+            return {
+              title: podcastInfo.title,
+              uploader: podcastInfo.uploader,
+              duration: podcastInfo.duration,
+              thumbnail: podcastInfo.thumbnail,
+              directAudioUrl: podcastInfo.audioUrl,
+            }
+          }
+        }
+      }
+    } catch (rssErr) {
+      console.warn('[metadata] RSS fetch note:', rssErr?.message)
+    }
+  }
+
+  // 3. Fast oEmbed for YouTube
   if (/(?:youtu\.be\/|youtube\.com\/)/i.test(url)) {
     try {
       const oeRes = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`)
@@ -391,11 +505,38 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
         throw new Error('Ungültige oder nicht erlaubte Medien-URL.')
       }
 
-      temporaryDirectory = await mkdtemp(join(tmpdir(), 'aehmzaehler-'))
-      console.log('[analyze] Temp dir:', temporaryDirectory)
-
       const words = JSON.parse(request.body.words || '[]').map((word) => word.trim().toLowerCase()).filter(Boolean)
       console.log('[analyze] Words to search:', words)
+
+      // 1. Instant Cache Check for repeat URLs
+      if (request.body.url) {
+        const cached = getFromCache(request.body.url, words)
+        if (cached) {
+          console.log('[analyze] ⚡ Cache HIT for URL:', request.body.url)
+          sendEvent({ type: 'status', stage: 'download', message: '⚡ Blitzschnell aus Cache geladen...' })
+          sendEvent({
+            type: 'progress',
+            percent: 50,
+            currentTime: (cached.duration || 10) / 2,
+            duration: cached.duration || 10,
+            counts: cached.counts || {},
+            fillerWords: cached.fillerWords || 0,
+            baseFillerWords: cached.baseFillerWords || 0,
+            totalWords: cached.totalWords || 0,
+            relativeRate: cached.relativeRate || 0,
+            partialText: (cached.text || '').slice(0, 100),
+            segments: (cached.segments || []).slice(0, Math.ceil((cached.segments || []).length / 2)),
+          })
+          sendEvent({
+            type: 'complete',
+            result: cached,
+          })
+          return response.end()
+        }
+      }
+
+      temporaryDirectory = await mkdtemp(join(tmpdir(), 'aehmzaehler-'))
+      console.log('[analyze] Temp dir:', temporaryDirectory)
 
       let file = request.file
       let mediaTitle = request.body.title ? String(request.body.title).trim() : ''
@@ -405,42 +546,54 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
 
       if (!file && request.body.url) {
         console.log('[analyze] Downloading from URL:', request.body.url)
-        sendEvent({ type: 'status', stage: 'download', message: 'Lade Video / Audio von YouTube herunter...' })
+        sendEvent({ type: 'status', stage: 'download', message: 'Lade Video / Podcast / Audio herunter...' })
 
-        // Fetch YouTube video title & metadata
+        let metadataInfo = null
         try {
-          const info = await getUrlMetadata(request.body.url)
-          if (info?.title && !mediaTitle) {
-            mediaTitle = info.title
+          metadataInfo = await getUrlMetadata(request.body.url)
+          if (metadataInfo?.title && !mediaTitle) {
+            mediaTitle = metadataInfo.title
             jobState.mediaTitle = mediaTitle
             sendEvent({ type: 'status', stage: 'download', message: `Lade „${mediaTitle}“ herunter...`, mediaTitle })
           }
         } catch (tErr) {
-          console.log('[analyze] Title fetch note:', tErr?.message)
+          console.log('[analyze] Metadata fetch note:', tErr?.message)
         }
 
-        const output = join(temporaryDirectory, 'audio.%(ext)s')
-        try {
-          await youtubedl(request.body.url, {
-            ...commonYtDlpOptions,
-            extractAudio: true,
-            audioFormat: 'mp3',
-            output,
-          }, { timeout: 10 * 60 * 1000 })
-        } catch (dlErr) {
-          const msg = dlErr instanceof Error ? dlErr.message : String(dlErr)
-          console.error('[analyze] yt-dlp Fehler:', msg)
-          throw new Error(`YouTube-Download fehlgeschlagen: ${msg.split('\n')[0]}`)
-        }
+        if (metadataInfo?.directAudioUrl) {
+          console.log('[analyze] Direct audio/podcast stream detected:', metadataInfo.directAudioUrl)
+          sendEvent({ type: 'status', stage: 'download', message: `Lade Audio „${mediaTitle || 'Podcast'}“ direkt...` })
+          const audioRes = await fetch(metadataInfo.directAudioUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0' },
+            signal: AbortSignal.timeout(60000),
+          })
+          if (!audioRes.ok) throw new Error(`Audio-Download fehlgeschlagen (HTTP ${audioRes.status})`)
+          const arrayBuffer = await audioRes.arrayBuffer()
+          file = { buffer: Buffer.from(arrayBuffer), originalname: 'audio.mp3', mimetype: 'audio/mpeg' }
+        } else {
+          const output = join(temporaryDirectory, 'audio.%(ext)s')
+          try {
+            await youtubedl(request.body.url, {
+              ...commonYtDlpOptions,
+              extractAudio: true,
+              audioFormat: 'mp3',
+              output,
+            }, { timeout: 10 * 60 * 1000 })
+          } catch (dlErr) {
+            const msg = dlErr instanceof Error ? dlErr.message : String(dlErr)
+            console.error('[analyze] yt-dlp Fehler:', msg)
+            throw new Error(`Download fehlgeschlagen: ${msg.split('\n')[0]}`)
+          }
 
-        const dirFiles = await readdir(temporaryDirectory)
-        const downloadedFileName = dirFiles.find((f) => f.startsWith('audio.'))
-        if (!downloadedFileName) {
-          throw new Error('Die heruntergeladene Audiodatei konnte im temporären Verzeichnis nicht gefunden werden.')
+          const dirFiles = await readdir(temporaryDirectory)
+          const downloadedFileName = dirFiles.find((f) => f.startsWith('audio.'))
+          if (!downloadedFileName) {
+            throw new Error('Die heruntergeladene Audiodatei konnte im temporären Verzeichnis nicht gefunden werden.')
+          }
+          const downloadedFilePath = join(temporaryDirectory, downloadedFileName)
+          file = { buffer: await readFile(downloadedFilePath), originalname: 'linked-media.mp3', mimetype: 'audio/mpeg' }
+          console.log('[analyze] Download complete, file:', downloadedFileName, 'size:', file.buffer.length)
         }
-        const downloadedFilePath = join(temporaryDirectory, downloadedFileName)
-        file = { buffer: await readFile(downloadedFilePath), originalname: 'linked-media.mp3', mimetype: 'audio/mpeg' }
-        console.log('[analyze] Download complete, file:', downloadedFileName, 'size:', file.buffer.length)
       }
 
       if (!file) {
@@ -548,29 +701,60 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
                 const baseFillerWords = Math.max(0, fillerWords - phraseOverlap)
                 const totalWords = text.trim() ? text.trim().split(/\s+/).length : 0
                 const relativeRate = totalWords ? baseFillerWords / totalWords : 0
-                const finalSegments = Array.isArray(data.segments) && data.segments.length > 0
-                  ? data.segments.map((s) => ({
-                      start: Number(s.start || 0),
-                      end: Number(s.end || 0),
-                      text: String(s.text || ''),
-                      counts: countSegmentWords(String(s.text || ''), words),
-                    }))
-                  : segments
+                const rawSegments = Array.isArray(data.segments) && data.segments.length > 0 ? data.segments : segments
 
-                console.log('[analyze] Complete! Total words:', totalWords, 'Fillers:', fillerWords, 'Segments:', finalSegments.length)
+                // Compute pauses (> 1.2s gap between segments) and enriched WPM
+                let pauseCount = 0
+                let totalPauseSeconds = 0
+                const finalSegments = rawSegments.map((s, idx) => {
+                  const segStart = Number(s.start || 0)
+                  const segEnd = Number(s.end || 0)
+                  const segText = String(s.text || '')
+                  const segWordCount = segText.trim() ? segText.trim().split(/\s+/).length : 0
+                  const segDurationMin = Math.max(0.01, (segEnd - segStart) / 60)
+                  const wpm = Math.round(segWordCount / segDurationMin)
+
+                  if (idx > 0) {
+                    const prevEnd = Number(rawSegments[idx - 1].end || 0)
+                    const gap = segStart - prevEnd
+                    if (gap >= 1.2) {
+                      pauseCount += 1
+                      totalPauseSeconds += gap
+                    }
+                  }
+
+                  return {
+                    start: segStart,
+                    end: segEnd,
+                    text: segText,
+                    counts: countSegmentWords(segText, words),
+                    wpm: isNaN(wpm) ? 0 : Math.min(300, Math.max(0, wpm)),
+                  }
+                })
+
+                console.log('[analyze] Complete! Total words:', totalWords, 'Fillers:', fillerWords, 'Segments:', finalSegments.length, 'Pauses:', pauseCount)
+                const completeResult = {
+                  text,
+                  duration: finalDuration,
+                  counts,
+                  fillerWords,
+                  baseFillerWords,
+                  totalWords,
+                  relativeRate,
+                  segments: finalSegments,
+                  pauseCount,
+                  totalPauseSeconds: Math.round(totalPauseSeconds * 10) / 10,
+                  mediaTitle: mediaTitle || (file ? file.originalname : ''),
+                }
+
+                // Cache completed result for fast repeat requests
+                if (request.body.url) {
+                  saveToCache(request.body.url, words, completeResult)
+                }
+
                 sendEvent({
                   type: 'complete',
-                  result: {
-                    text,
-                    duration: finalDuration,
-                    counts,
-                    fillerWords,
-                    baseFillerWords,
-                    totalWords,
-                    relativeRate,
-                    segments: finalSegments,
-                    mediaTitle: mediaTitle || (file ? file.originalname : ''),
-                  },
+                  result: completeResult,
                 })
               }
             } catch (err) {

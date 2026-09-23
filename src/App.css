@@ -2720,6 +2720,18 @@ body { transition: background 0.35s ease, color 0.35s ease; }
   border-color: var(--red);
 }
 
+.report-btn-share {
+  background: rgba(147, 51, 234, 0.08);
+  border-color: rgba(147, 51, 234, 0.25);
+  color: #9333ea;
+  font-weight: 600;
+}
+
+.report-btn-share:hover {
+  background: rgba(147, 51, 234, 0.16);
+  border-color: #9333ea;
+}
+
 .report-btn-img {
   background: rgba(59, 130, 246, 0.08);
   border-color: rgba(59, 130, 246, 0.25);
@@ -2764,6 +2776,12 @@ body { transition: background 0.35s ease, color 0.35s ease; }
   color: #f87171;
 }
 
+:root[data-theme="dark"] .report-btn-share {
+  background: rgba(168, 85, 247, 0.2);
+  border-color: rgba(168, 85, 247, 0.45);
+  color: #c084fc;
+}
+
 :root[data-theme="dark"] .report-btn-img {
   background: rgba(59, 130, 246, 0.2);
   border-color: rgba(59, 130, 246, 0.4);
@@ -2773,6 +2791,189 @@ body { transition: background 0.35s ease, color 0.35s ease; }
 :root[data-theme="dark"] .report-btn-pdf {
   background: rgba(47, 122, 92, 0.2);
   border-color: rgba(47, 122, 92, 0.4);
+  color: #34d399;
+}
+
+/* 4-column metrics layout */
+.metrics-4col {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr) !important;
+  gap: 10px;
+}
+
+@media (max-width: 640px) {
+  .metrics-4col {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+}
+
+/* ============================================================
+   📈 SPRECHTEMPO (WPM) TIMELINE CHART
+   ============================================================ */
+.wpm-timeline-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-top: 14px;
+}
+
+.wpm-header-flex {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.wpm-subtext {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.wpm-legend-pills {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+}
+
+.wpm-pill-calm { color: #2563eb; }
+.wpm-pill-optimal { color: #16a34a; font-weight: 600; }
+.wpm-pill-fast { color: #ea580c; }
+
+.wpm-chart-track {
+  position: relative;
+  height: 52px;
+  background: rgba(0, 0, 0, 0.03);
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+}
+
+:root[data-theme="dark"] .wpm-chart-track {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.wpm-bar-segment {
+  position: absolute;
+  bottom: 0;
+  border-radius: 3px 3px 0 0;
+  cursor: pointer;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  min-width: 3px;
+}
+
+.wpm-bar-segment:hover {
+  opacity: 0.85;
+  transform: scaleY(1.08);
+}
+
+.wpm-bar-calm {
+  background: #60a5fa;
+}
+
+.wpm-bar-optimal {
+  background: #22c55e;
+}
+
+.wpm-bar-fast {
+  background: #f97316;
+}
+
+/* ============================================================
+   ⚡ PRESETS IN SETTINGS
+   ============================================================ */
+.presets-container {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  background: rgba(0, 0, 0, 0.02);
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+}
+
+:root[data-theme="dark"] .presets-container {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.presets-label {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 8px;
+}
+
+.presets-btn-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.preset-tag-btn {
+  padding: 6px 12px;
+  border-radius: 20px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.preset-tag-btn:hover {
+  border-color: var(--red);
+  background: #fff;
+  transform: translateY(-1px);
+}
+
+.preset-tag-reset {
+  color: var(--muted);
+}
+
+:root[data-theme="dark"] .preset-tag-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+
+:root[data-theme="dark"] .preset-tag-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* ============================================================
+   📱 PWA INSTALL BUTTON
+   ============================================================ */
+.install-pwa-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 20px;
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  color: #059669;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  animation: pulseLight 3s infinite;
+}
+
+.install-pwa-btn:hover {
+  background: rgba(16, 185, 129, 0.22);
+  border-color: #059669;
+  transform: translateY(-1px);
+}
+
+:root[data-theme="dark"] .install-pwa-btn {
+  background: rgba(16, 185, 129, 0.2);
+  border-color: rgba(16, 185, 129, 0.4);
   color: #34d399;
 }
 

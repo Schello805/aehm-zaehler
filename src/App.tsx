@@ -33,6 +33,8 @@ type Result = {
   text: string
   segments: TranscriptSegment[]
   mediaTitle?: string
+  pauseCount?: number
+  totalPauseSeconds?: number
 }
 
 type TranscriptSegment = {
@@ -40,6 +42,7 @@ type TranscriptSegment = {
   end: number
   text: string
   counts: Record<string, number>
+  wpm?: number
 }
 
 type ProgressState = {
@@ -169,8 +172,29 @@ function App() {
   const playbackRef = useRef<HTMLAudioElement>(null)
   const analysisControllerRef = useRef<AbortController | null>(null)
   const currentJobIdRef = useRef<string | null>(null)
-  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'copied-comment'>('idle')
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'copied-comment' | 'copied-link'>('idle')
+  const [installPrompt, setInstallPrompt] = useState<any>(null)
   const playbackUrl = useMemo(() => (file ? URL.createObjectURL(file) : ''), [file])
+
+  // Read Deep-Link query params (?v= or ?url=) on mount & listen for PWA install event
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search)
+      const vParam = params.get('v')
+      const urlParam = params.get('url')
+      const initial = urlParam || (vParam ? `https://www.youtube.com/watch?v=${vParam}` : '')
+      if (initial && !url) {
+        setUrl(initial)
+      }
+    } catch {}
+
+    const handleInstallPrompt = (e: any) => {
+      e.preventDefault()
+      setInstallPrompt(e)
+    }
+    window.addEventListener('beforeinstallprompt', handleInstallPrompt)
+    return () => window.removeEventListener('beforeinstallprompt', handleInstallPrompt)
+  }, [])
 
   const activeSourceUrl = useMemo(() => {
     if (activeHistoryId) {
@@ -437,6 +461,32 @@ ${advice.summary}
       setCopyStatus('copied')
       setTimeout(() => setCopyStatus('idle'), 2500)
     }).catch(() => {})
+  }
+
+  const copyShareLink = () => {
+    const targetUrl = url || (activeHistoryId ? history.find((h) => h.id === activeHistoryId)?.source : '')
+    let shareLink = window.location.href
+    if (targetUrl) {
+      shareLink = `${window.location.origin}/?url=${encodeURIComponent(targetUrl)}`
+    }
+    navigator.clipboard.writeText(shareLink).then(() => {
+      setCopyStatus('copied-link')
+      setTimeout(() => setCopyStatus('idle'), 2500)
+    }).catch(() => {})
+  }
+
+  const calculatePauses = (segments: TranscriptSegment[]) => {
+    if (!segments || segments.length < 2) return { count: 0, totalSeconds: 0 }
+    let count = 0
+    let totalSeconds = 0
+    for (let i = 1; i < segments.length; i++) {
+      const gap = segments[i].start - segments[i - 1].end
+      if (gap >= 1.2) {
+        count += 1
+        totalSeconds += gap
+      }
+    }
+    return { count, totalSeconds: Math.round(totalSeconds * 10) / 10 }
   }
 
   const downloadReportCardImage = () => {
@@ -880,6 +930,16 @@ ${advice.summary}
     setError('')
     setResult(null)
     setActiveHistoryId(null)
+
+    if (url) {
+      try {
+        const newSearch = `?url=${encodeURIComponent(url)}`
+        if (window.location.search !== newSearch) {
+          window.history.replaceState({}, '', `${window.location.pathname}${newSearch}`)
+        }
+      } catch {}
+    }
+
     const initialDuration = fetchedMediaInfo?.duration || 0
     const initialRemaining = initialDuration > 0 ? getEstimatedAnalysisSeconds(initialDuration) : defaultEstimatedAnalysisSeconds
 
@@ -1131,6 +1191,22 @@ ${advice.summary}
           <button className={view === 'analyse' ? 'nav-link active' : 'nav-link'} onClick={() => setView('analyse')} type="button">Analyse</button>
           <button className={view === 'live' ? 'nav-link active' : 'nav-link'} onClick={() => setView('live')} type="button">🔴 Live Studio</button>
           <button className={view === 'settings' ? 'nav-link active' : 'nav-link'} onClick={() => setView('settings')} type="button">Settings</button>
+          {installPrompt && (
+            <button
+              type="button"
+              className="install-pwa-btn"
+              onClick={async () => {
+                if (installPrompt) {
+                  installPrompt.prompt()
+                  const choice = await installPrompt.userChoice
+                  if (choice && choice.outcome === 'accepted') setInstallPrompt(null)
+                }
+              }}
+              title="ähm-zähler als Web-App installieren"
+            >
+              📱 App installieren
+            </button>
+          )}
           <button
             type="button"
             className="self-host-badge-btn"
@@ -1220,13 +1296,13 @@ ${advice.summary}
                         setUrl(event.target.value)
                         setResult(null)
                       }}
-                      placeholder="https://youtube.com/..."
+                      placeholder="YouTube-Link, Podcast-RSS oder MP3-URL..."
                     />
                   </div>
                   {isFetchingMediaInfo && (
                     <div className="url-preview-card loading">
                       <div className="url-preview-spinner" />
-                      <span>Ermittle YouTube-Titel & Videolänge…</span>
+                      <span>Ermittle Medien-Titel & Dauer…</span>
                     </div>
                   )}
                   {fetchedMediaInfo && !isFetchingMediaInfo && (
@@ -1236,12 +1312,12 @@ ${advice.summary}
                         <strong className="url-preview-title">{fetchedMediaInfo.title}</strong>
                         <span className="url-preview-sub">
                           {fetchedMediaInfo.uploader ? `${fetchedMediaInfo.uploader} • ` : ''}
-                          {formatTimestamp(fetchedMediaInfo.duration)} Min.
+                          {fetchedMediaInfo.duration ? `${formatTimestamp(fetchedMediaInfo.duration)} Min.` : 'Audio-Quelle'}
                         </span>
                       </div>
                     </div>
                   )}
-                  <small>YouTube, Vimeo oder direkte Medienlinks werden unterstützt.</small>
+                  <small>YouTube, Podcast RSS-Feeds oder direkte Audio-/Videolinks werden unterstützt.</small>
                 </div>
               </div>
 
@@ -1399,6 +1475,14 @@ ${advice.summary}
                         </button>
                         <button
                           type="button"
+                          className="report-btn report-btn-share"
+                          onClick={copyShareLink}
+                          title="Direkten Link zur Analyse kopieren und teilen"
+                        >
+                          {copyStatus === 'copied-link' ? '✓ Link kopiert!' : '🔗 Link teilen'}
+                        </button>
+                        <button
+                          type="button"
                           className="report-btn report-btn-img"
                           onClick={downloadReportCardImage}
                           title="Als gestaltete Report-Grafik (PNG) herunterladen"
@@ -1436,7 +1520,7 @@ ${advice.summary}
                     </span>
                   </div>
 
-                  <div className="metrics">
+                  <div className="metrics metrics-4col">
                     <div>
                       <b>Gesprochene Wörter</b>
                       <strong>{result.totalWords}</strong>
@@ -1451,6 +1535,11 @@ ${advice.summary}
                       <b>Füllwort-Anteil</b>
                       <strong>{(result.relativeRate * 100).toLocaleString('de-DE', { maximumFractionDigits: 1 })} %</strong>
                       <span>relativ</span>
+                    </div>
+                    <div>
+                      <b>Sprechpausen (&gt;1,2s)</b>
+                      <strong>{result.pauseCount ?? calculatePauses(result.segments || []).count}</strong>
+                      <span>{result.totalPauseSeconds ? `${result.totalPauseSeconds}s gesamt` : 'bewusst gesetzt'}</span>
                     </div>
                   </div>
 
@@ -1590,6 +1679,63 @@ ${advice.summary}
                           <span><span className="heatmap-legend-dot" style={{ background: 'hsl(140, 30%, 86%)', border: '1px solid #94a3b8' }} />Kein Füllwort</span>
                           <span><span className="heatmap-legend-dot" style={{ background: 'hsl(45, 90%, 50%)' }} />Wenige</span>
                           <span><span className="heatmap-legend-dot" style={{ background: 'hsl(0, 85%, 45%)' }} />Viele</span>
+                        </div>
+                      </div>
+                    )
+                  })()}
+
+                  {/* 📈 Sprechtempo-Verlauf (WPM Timeline) */}
+                  {result.segments && result.segments.length > 0 && result.duration > 0 && (() => {
+                    const segs = result.segments
+                    const computedWpms = segs.map((s) => {
+                      if (s.wpm !== undefined && s.wpm > 0) return s.wpm
+                      const segWords = s.text.trim() ? s.text.trim().split(/\s+/).length : 0
+                      const durMin = Math.max(0.01, (s.end - s.start) / 60)
+                      return Math.round(segWords / durMin)
+                    })
+                    const maxWpm = Math.max(180, ...computedWpms)
+                    const avgWpm = Math.round(computedWpms.reduce((a, b) => a + b, 0) / (computedWpms.length || 1))
+
+                    return (
+                      <div className="wpm-timeline-card">
+                        <div className="wpm-header-flex">
+                          <div>
+                            <div className="section-label">📈 Sprechtempo-Verlauf (Wörter / Minute)</div>
+                            <span className="wpm-subtext">
+                              Ø <strong>{avgWpm} WPM</strong> • Klicke auf einen Abschnitt, um dorthin zu springen.
+                            </span>
+                          </div>
+                          <div className="wpm-legend-pills">
+                            <span className="wpm-pill wpm-pill-calm">● &lt;110 Ruhig</span>
+                            <span className="wpm-pill wpm-pill-optimal">● 110–155 Optimal</span>
+                            <span className="wpm-pill wpm-pill-fast">● &gt;155 Hektisch</span>
+                          </div>
+                        </div>
+
+                        <div className="wpm-chart-track" title="Sprechtempo über die Zeit">
+                          {segs.map((seg, i) => {
+                            const wpm = computedWpms[i] || 0
+                            const leftPercent = (seg.start / (result.duration || 1)) * 100
+                            const widthPercent = Math.max(0.8, ((seg.end - seg.start) / (result.duration || 1)) * 100)
+                            const heightPercent = Math.min(100, Math.max(18, (wpm / maxWpm) * 100))
+                            let colorClass = 'wpm-bar-optimal'
+                            if (wpm < 110) colorClass = 'wpm-bar-calm'
+                            else if (wpm > 155) colorClass = 'wpm-bar-fast'
+
+                            return (
+                              <div
+                                key={i}
+                                className={`wpm-bar-segment ${colorClass}`}
+                                style={{
+                                  left: `${leftPercent}%`,
+                                  width: `${widthPercent}%`,
+                                  height: `${heightPercent}%`,
+                                }}
+                                title={`${formatTimestamp(seg.start)}: ${wpm} WPM — „${seg.text.slice(0, 45)}...“`}
+                                onClick={() => seekAndPlay(seg.start)}
+                              />
+                            )
+                          })}
                         </div>
                       </div>
                     )
@@ -1982,6 +2128,53 @@ function Settings({
         <div className="panel-heading">
           <div><span className="step">01</span><h2>Suchbegriffe</h2></div>
           <span className="format-note">{words.length} aktiv</span>
+        </div>
+
+        <div className="presets-container">
+          <span className="presets-label">⚡ Schnell-Vorlagen / Presets:</span>
+          <div className="presets-btn-group">
+            <button
+              type="button"
+              className="preset-tag-btn"
+              onClick={() => {
+                const classic = ['äh', 'ähm', 'öh', 'hm', 'mhm']
+                setWords(Array.from(new Set([...words, ...classic])))
+              }}
+              title="Klassische Zögerlaute hinzufügen"
+            >
+              🎯 Klassisch (+5)
+            </button>
+            <button
+              type="button"
+              className="preset-tag-btn"
+              onClick={() => {
+                const rhetoric = ['eigentlich', 'sozusagen', 'quasi', 'im endeffekt', 'praktisch', 'gewissermaßen', 'am ende des tages', 'ich sag mal']
+                setWords(Array.from(new Set([...words, ...rhetoric])))
+              }}
+              title="Rhetorische Weichmacher & Floskeln hinzufügen"
+            >
+              💬 Rhetorik & Weichmacher (+8)
+            </button>
+            <button
+              type="button"
+              className="preset-tag-btn"
+              onClick={() => {
+                const dups = ['ich ich', 'wir wir', 'und und', 'aber aber', 'also also', 'dann dann']
+                setWords(Array.from(new Set([...words, ...dups])))
+              }}
+              title="Wortdopplungen hinzufügen"
+            >
+              🔁 Wortdopplungen (+6)
+            </button>
+            <button
+              type="button"
+              className="preset-tag-btn preset-tag-reset"
+              onClick={() => setWords(['äh', 'ähm'])}
+              title="Auf Standard zurücksetzen"
+            >
+              ↺ Standard (äh, ähm)
+            </button>
+          </div>
         </div>
 
         <div className="word-list">
