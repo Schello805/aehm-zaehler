@@ -163,6 +163,7 @@ function App() {
   const playbackRef = useRef<HTMLAudioElement>(null)
   const analysisControllerRef = useRef<AbortController | null>(null)
   const currentJobIdRef = useRef<string | null>(null)
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied'>('idle')
   const playbackUrl = useMemo(() => (file ? URL.createObjectURL(file) : ''), [file])
 
   const activeSourceUrl = useMemo(() => {
@@ -362,6 +363,191 @@ function App() {
     } finally {
       setIsCleaningAudio(false)
     }
+  }
+
+  const printPdfReport = () => {
+    window.print()
+  }
+
+  const copyTextSummary = () => {
+    if (!result) return
+    const advice = getOptimizationAdvice(result)
+    const topWords = Object.entries(result.counts || {})
+      .filter(([, count]) => count > 0)
+      .sort(([, a], [, b]) => b - a)
+      .slice(0, 5)
+      .map(([w, c]) => `• „${w}“: ${c}×`)
+      .join('\n')
+
+    const summaryText = `📊 Sprechfluss-Analyse: ${activeSourceLabel || 'Audio/Video'}
+⏱️ Dauer: ${formatTimestamp(result.duration)} Min.
+🗣️ Wörter gesamt: ${result.totalWords.toLocaleString('de-DE')}
+🚨 Füllwörter gesamt: ${result.fillerWords} (${((result.relativeRate || 0) * 100).toLocaleString('de-DE', { maximumFractionDigits: 1 })} % — ${advice.rate.toLocaleString('de-DE', { maximumFractionDigits: 1 })} Füllwörter/Min.)
+
+🔍 Häufigste Füllwörter:
+${topWords || '• Keine Füllwörter gefunden'}
+
+💡 Feedback: ${advice.title}
+${advice.summary}
+
+🔗 Erstellt mit https://aehm-zaehler.de`
+
+    navigator.clipboard.writeText(summaryText).then(() => {
+      setCopyStatus('copied')
+      setTimeout(() => setCopyStatus('idle'), 2500)
+    }).catch(() => {})
+  }
+
+  const downloadReportCardImage = () => {
+    if (!result) return
+    const canvas = document.createElement('canvas')
+    canvas.width = 1200
+    canvas.height = 800
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    const advice = getOptimizationAdvice(result)
+
+    // Background gradient
+    const bgGrad = ctx.createLinearGradient(0, 0, 0, 800)
+    bgGrad.addColorStop(0, '#fbf9f5')
+    bgGrad.addColorStop(1, '#eee7dd')
+    ctx.fillStyle = bgGrad
+    ctx.fillRect(0, 0, 1200, 800)
+
+    // Decorative top border
+    ctx.fillStyle = '#c75b47'
+    ctx.fillRect(0, 0, 1200, 6)
+
+    // Header bar
+    ctx.fillStyle = '#1d1c1a'
+    ctx.font = 'bold 36px "Outfit", sans-serif'
+    ctx.fillText('ähzähler', 60, 70)
+
+    ctx.fillStyle = '#c75b47'
+    ctx.font = 'bold 15px sans-serif'
+    ctx.fillText('SPRECHFLUSS-ANALYSEBERICHT', 60, 102)
+
+    // Date
+    ctx.fillStyle = '#6d665f'
+    ctx.font = '15px sans-serif'
+    ctx.textAlign = 'right'
+    ctx.fillText(new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }), 1140, 70)
+    ctx.fillText('aehm-zaehler.de', 1140, 95)
+    ctx.textAlign = 'left'
+
+    // Separator line
+    ctx.strokeStyle = '#d8d1c8'
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    ctx.moveTo(60, 120)
+    ctx.lineTo(1140, 120)
+    ctx.stroke()
+
+    // Title & source
+    ctx.fillStyle = '#1d1c1a'
+    ctx.font = 'bold 22px "Outfit", sans-serif'
+    const titleText = (activeSourceLabel || 'Aufnahme').slice(0, 75)
+    ctx.fillText(titleText, 60, 160)
+
+    ctx.fillStyle = '#6d665f'
+    ctx.font = '15px sans-serif'
+    ctx.fillText(`Gesamtdauer: ${formatTimestamp(result.duration)} Min. • ${result.totalWords.toLocaleString('de-DE')} gesprochene Wörter`, 60, 190)
+
+    // 3 Stat Cards
+    const drawCard = (x: number, y: number, w: number, h: number, title: string, value: string, sub: string, highlight?: boolean) => {
+      ctx.fillStyle = '#ffffff'
+      ctx.beginPath()
+      ctx.roundRect(x, y, w, h, 14)
+      ctx.fill()
+      ctx.strokeStyle = highlight ? '#c75b47' : '#d8d1c8'
+      ctx.lineWidth = highlight ? 2 : 1
+      ctx.stroke()
+
+      ctx.fillStyle = '#6d665f'
+      ctx.font = 'bold 13px sans-serif'
+      ctx.fillText(title.toUpperCase(), x + 24, y + 36)
+
+      ctx.fillStyle = highlight ? '#c75b47' : '#1d1c1a'
+      ctx.font = 'bold 42px "Outfit", sans-serif'
+      ctx.fillText(value, x + 24, y + 90)
+
+      ctx.fillStyle = '#8a8279'
+      ctx.font = '14px sans-serif'
+      ctx.fillText(sub, x + 24, y + 124)
+    }
+
+    drawCard(60, 220, 340, 150, 'Gesprochene Wörter', result.totalWords.toLocaleString('de-DE'), 'Wortanzahl total')
+    drawCard(430, 220, 340, 150, 'Füllwörter gesamt', String(result.fillerWords), `${((result.relativeRate || 0) * 100).toLocaleString('de-DE', { maximumFractionDigits: 1 })} % Füllwort-Quote`, true)
+    drawCard(800, 220, 340, 150, 'Füllwort-Tempo', `${advice.rate.toLocaleString('de-DE', { maximumFractionDigits: 1 })} /min`, 'Füllwörter pro Minute')
+
+    // Feedback Box
+    ctx.fillStyle = advice.tone === 'good' ? 'rgba(47, 122, 92, 0.08)' : 'rgba(199, 91, 71, 0.08)'
+    ctx.beginPath()
+    ctx.roundRect(60, 400, 1080, 150, 14)
+    ctx.fill()
+    ctx.strokeStyle = advice.tone === 'good' ? 'rgba(47, 122, 92, 0.3)' : 'rgba(199, 91, 71, 0.3)'
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+
+    ctx.fillStyle = advice.tone === 'good' ? '#2f7a5c' : '#c75b47'
+    ctx.font = 'bold 20px "Outfit", sans-serif'
+    ctx.fillText(`Fazit & Analyse: ${advice.title}`, 90, 442)
+
+    ctx.fillStyle = '#1d1c1a'
+    ctx.font = '16px sans-serif'
+    ctx.fillText(advice.summary, 90, 478)
+
+    ctx.fillStyle = '#6d665f'
+    ctx.font = 'italic 14px sans-serif'
+    ctx.fillText(`Tipps für die Praxis: ${advice.tips.join(' • ')}`, 90, 516)
+
+    // Top words section
+    ctx.fillStyle = '#1d1c1a'
+    ctx.font = 'bold 18px "Outfit", sans-serif'
+    ctx.fillText('Häufigste Füllwörter im Detail:', 60, 595)
+
+    const topWords = Object.entries(result.counts || {})
+      .filter(([, c]) => c > 0)
+      .sort(([, a], [, b]) => b - a)
+      .slice(0, 5)
+
+    let wx = 60
+    if (topWords.length === 0) {
+      ctx.fillStyle = '#2f7a5c'
+      ctx.font = '16px sans-serif'
+      ctx.fillText('Keine Füllwörter erkannt — Exzellenter Sprechfluss!', 60, 640)
+    } else {
+      for (const [w, c] of topWords) {
+        const text = `„${w}“: ${c}×`
+        ctx.font = 'bold 16px sans-serif'
+        const tw = ctx.measureText(text).width + 36
+        ctx.fillStyle = '#ffffff'
+        ctx.beginPath()
+        ctx.roundRect(wx, 615, tw, 42, 8)
+        ctx.fill()
+        ctx.strokeStyle = '#d8d1c8'
+        ctx.lineWidth = 1
+        ctx.stroke()
+
+        ctx.fillStyle = '#c75b47'
+        ctx.fillText(text, wx + 18, 642)
+        wx += tw + 14
+      }
+    }
+
+    // Footer
+    ctx.fillStyle = '#8a8279'
+    ctx.font = '14px sans-serif'
+    ctx.fillText('Erstellt mit ähzähler (https://aehm-zaehler.de) — Sprechfluss sichtbar machen & trainieren', 60, 755)
+
+    const dataUrl = canvas.toDataURL('image/png')
+    const a = document.createElement('a')
+    a.href = dataUrl
+    a.download = `sprechfluss-bericht-${Date.now()}.png`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
   }
 
   useEffect(() => () => {
@@ -946,17 +1132,46 @@ function App() {
                       </div>
                     </div>
                   ) : (
-                    <div className="complete-banner">
-                      <div className="complete-badge-content">
-                        <span className="complete-badge-icon">✓</span>
-                        <div>
-                          <strong>Analyse erfolgreich abgeschlossen</strong>
-                          <span className="complete-badge-sub">
-                            {result.totalWords} gesprochene Wörter • {formatTimestamp(result.duration)} Min. • {result.fillerWords} Füllwörter ({((result.relativeRate || 0) * 100).toFixed(1)}%)
-                          </span>
+                    <>
+                      <div className="complete-banner">
+                        <div className="complete-badge-content">
+                          <span className="complete-badge-icon">✓</span>
+                          <div>
+                            <strong>Analyse erfolgreich abgeschlossen</strong>
+                            <span className="complete-badge-sub">
+                              {result.totalWords} gesprochene Wörter • {formatTimestamp(result.duration)} Min. • {result.fillerWords} Füllwörter ({((result.relativeRate || 0) * 100).toFixed(1)}%)
+                            </span>
+                          </div>
                         </div>
                       </div>
-                    </div>
+
+                      <div className="report-action-bar">
+                        <button
+                          type="button"
+                          className="report-btn report-btn-copy"
+                          onClick={copyTextSummary}
+                          title="Formatierte Zusammenfassung kopieren (für E-Mail, YouTube-Kommentare etc.)"
+                        >
+                          {copyStatus === 'copied' ? '✓ Text kopiert!' : '📋 Text-Bericht kopieren'}
+                        </button>
+                        <button
+                          type="button"
+                          className="report-btn report-btn-img"
+                          onClick={downloadReportCardImage}
+                          title="Als gestaltete Report-Grafik (PNG) herunterladen"
+                        >
+                          📸 Als Bild speichern
+                        </button>
+                        <button
+                          type="button"
+                          className="report-btn report-btn-pdf"
+                          onClick={printPdfReport}
+                          title="Als 1-seitiges PDF drucken oder speichern"
+                        >
+                          📄 PDF drucken
+                        </button>
+                      </div>
+                    </>
                   )}
 
                   <div className="result-source">
