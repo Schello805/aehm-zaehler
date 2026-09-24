@@ -14,6 +14,7 @@ declare global {
 const defaults = ['äh', 'ähm']
 
 const countWordOccurrences = (text: string, word: string) => {
+  if (!text || !word || typeof text !== 'string' || typeof word !== 'string') return 0
   const tokens = text.toLocaleLowerCase('de-DE').match(/[\p{L}\p{N}]+/gu) || []
   const searchTokens = word.toLocaleLowerCase('de-DE').match(/[\p{L}\p{N}]+/gu) || []
   if (!searchTokens.length) return 0
@@ -95,7 +96,10 @@ const cleanHallucinatedRepetitions = (text: string): string => {
 }
 
 const ensureMultiSpeakerDiarization = (resultData: Result, wordsList: string[]): Result => {
-  if (!resultData || !resultData.segments || resultData.segments.length === 0) return resultData
+  if (!resultData || !resultData.segments || !Array.isArray(resultData.segments) || resultData.segments.length === 0) return resultData
+  const safeWords = Array.isArray(wordsList) && wordsList.length > 0
+    ? wordsList.filter((w): w is string => typeof w === 'string' && Boolean(w.trim()))
+    : defaults
 
   const rawSegments = resultData.segments
   const validPitches = rawSegments
@@ -164,7 +168,7 @@ const ensureMultiSpeakerDiarization = (resultData: Result, wordsList: string[]):
     const speakerName = s.speakerName && s.speakerName !== 'Sprecher 1' ? s.speakerName : (speakerId === 'speaker_1' ? 'Sprecher 1' : 'Sprecher 2')
 
     const segCounts: Record<string, number> = {}
-    for (const word of wordsList) {
+    for (const word of safeWords) {
       segCounts[word] = countWordOccurrences(cleanedText, word)
     }
 
@@ -193,7 +197,7 @@ const ensureMultiSpeakerDiarization = (resultData: Result, wordsList: string[]):
         relativeRate: 0,
         duration: 0,
         wpm: 0,
-        counts: Object.fromEntries(wordsList.map((w) => [w, 0])),
+        counts: Object.fromEntries(safeWords.map((w) => [w, 0])),
       }
     }
 
@@ -923,8 +927,15 @@ function App() {
 
     // 3. Local audio element
     if (playbackRef.current) {
-      playbackRef.current.currentTime = target
-      void playbackRef.current.play()
+      try {
+        playbackRef.current.currentTime = target
+        const p = playbackRef.current.play()
+        if (p && typeof p.catch === 'function') {
+          p.catch(() => {
+            // Autoplay policy or source not loaded yet
+          })
+        }
+      } catch {}
     }
   }
 
@@ -1629,14 +1640,14 @@ ${advice.summary}
   const filteredHistory = useMemo(() => {
     const query = historyFilter.trim().toLowerCase()
     const items = query
-      ? history.filter((entry) => entry.source.toLowerCase().includes(query) || entry.sourceLabel.toLowerCase().includes(query))
+      ? history.filter((entry) => String(entry.source || '').toLowerCase().includes(query) || String(entry.sourceLabel || '').toLowerCase().includes(query))
       : history
 
     return [...items].sort((left, right) => {
-      if (historySort === 'oldest') return new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime()
-      if (historySort === 'words') return right.result.fillerWords - left.result.fillerWords
-      if (historySort === 'rate') return right.result.relativeRate - left.result.relativeRate
-      return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
+      if (historySort === 'oldest') return (new Date(left.createdAt || 0).getTime()) - (new Date(right.createdAt || 0).getTime())
+      if (historySort === 'words') return (right.result?.fillerWords || 0) - (left.result?.fillerWords || 0)
+      if (historySort === 'rate') return (right.result?.relativeRate || 0) - (left.result?.relativeRate || 0)
+      return (new Date(right.createdAt || 0).getTime()) - (new Date(left.createdAt || 0).getTime())
     })
   }, [history, historyFilter, historySort])
 
@@ -2107,9 +2118,10 @@ ${advice.summary}
         <RankingView
           history={history}
           onOpenAnalysis={(entry) => {
+            if (!entry?.result) return
             setResult(ensureMultiSpeakerDiarization(entry.result, entry.words || words))
             setActiveHistoryId(entry.id)
-            setUrl(entry.source.startsWith('http') ? entry.source : '')
+            setUrl(typeof entry.source === 'string' && entry.source.startsWith('http') ? entry.source : '')
             setFile(null)
             navigateTo('analyse')
           }}
@@ -3171,25 +3183,26 @@ ${advice.summary}
                                 }}
                                 autoFocus
                               />
-                            ) : entry.source.startsWith('http') ? (
-                              <a href={entry.source} target="_blank" rel="noreferrer">{entry.sourceLabel}</a>
+                            ) : typeof entry.source === 'string' && entry.source.startsWith('http') ? (
+                              <a href={entry.source} target="_blank" rel="noreferrer">{entry.sourceLabel || entry.source}</a>
                             ) : (
-                              <span>{entry.sourceLabel}</span>
+                              <span>{entry.sourceLabel || entry.source || 'Audio-Analyse'}</span>
                             )}
                           </td>
-                          <td>{new Date(entry.createdAt).toLocaleDateString('de-DE')}</td>
-                          <td>{entry.result.fillerWords}</td>
-                          <td>{entry.result.totalWords}</td>
-                          <td>{(entry.result.relativeRate * 100).toLocaleString('de-DE', { maximumFractionDigits: 1 })}%</td>
+                          <td>{entry.createdAt ? new Date(entry.createdAt).toLocaleDateString('de-DE') : '—'}</td>
+                          <td>{entry.result?.fillerWords ?? 0}</td>
+                          <td>{entry.result?.totalWords ?? 0}</td>
+                          <td>{((entry.result?.relativeRate || 0) * 100).toLocaleString('de-DE', { maximumFractionDigits: 1 })}%</td>
                           <td>
                             <div className="history-actions">
                               <button
                                 type="button"
                                 className="history-result-button"
                                 onClick={() => {
+                                  if (!entry?.result) return
                                   setResult(ensureMultiSpeakerDiarization(entry.result, words))
                                   setActiveHistoryId(entry.id)
-                                  setUrl(entry.source.startsWith('http') ? entry.source : '')
+                                  setUrl(typeof entry.source === 'string' && entry.source.startsWith('http') ? entry.source : '')
                                   setFile(null)
                                   navigateTo('analyse')
                                 }}
