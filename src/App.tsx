@@ -129,12 +129,6 @@ const ensureMultiSpeakerDiarization = (resultData: Result, wordsList: string[]):
   let isMultiSpeaker = usePitchClustering
   let speakerTurnCount = 0
 
-  // Pre-compile word regexes once for all segments
-  const compiledWordRegexes = wordsList.map((w) => ({
-    word: w,
-    regex: new RegExp(`\\b${w.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}\\b`, 'gi'),
-  }))
-
   const enrichedSegments = rawSegments.map((s, idx) => {
     const segPitch = Number(s.pitch || 0)
     const cleanedText = cleanHallucinatedRepetitions(s.text)
@@ -167,10 +161,8 @@ const ensureMultiSpeakerDiarization = (resultData: Result, wordsList: string[]):
     const speakerName = s.speakerName && s.speakerName !== 'Sprecher 1' ? s.speakerName : (speakerId === 'speaker_1' ? 'Sprecher 1' : 'Sprecher 2')
 
     const segCounts: Record<string, number> = {}
-    for (const { word, regex } of compiledWordRegexes) {
-      regex.lastIndex = 0
-      const matches = cleanedText.match(regex)
-      segCounts[word] = matches ? matches.length : 0
+    for (const word of wordsList) {
+      segCounts[word] = countWordOccurrences(cleanedText, word)
     }
 
     return {
@@ -643,10 +635,19 @@ function App() {
     result.segments.forEach((seg, segIndex) => {
       if (Array.isArray(seg.words) && seg.words.length > 0) {
         seg.words.forEach((w, wIndex) => {
-          const wClean = String(w.clean || w.word || '').trim().toLowerCase()
+          const wClean = String(w.clean || w.word || '').trim().toLowerCase().replace(/[^\p{L}\p{N}]/gu, '')
           const matched = words.some((target) => {
-            const targetClean = target.trim().toLowerCase()
-            return wClean === targetClean || wClean.includes(targetClean)
+            const targetClean = target.trim().toLowerCase().replace(/[^\p{L}\p{N}]/gu, '')
+            if (!targetClean || !wClean) return false
+            if (wClean === targetClean) return true
+            if (targetClean === "äh") {
+              return ["äh", "ä", "ah", "aeh", "eh", "er", "öh", "oeh", "ähh", "ähhh", "ää", "äääh", "uh"].includes(wClean)
+            }
+            if (targetClean === "ähm") {
+              return ["ähm", "aehm", "ehm", "öhm", "oehm", "uhm", "erm", "äm", "aem", "äähm"].includes(wClean)
+            }
+            if (targetClean.length > 3 && (wClean.startsWith(targetClean) || targetClean.startsWith(wClean))) return true
+            return false
           })
           if (matched) {
             occurrences.push({
@@ -669,7 +670,8 @@ function App() {
           let matchFound = false
 
           words.forEach((targetWord) => {
-            const regex = new RegExp(`\\b${targetWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi')
+            const escaped = targetWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+            const regex = new RegExp(`(?<=^|[^\\p{L}\\p{N}])${escaped}(?=[^\\p{L}\\p{N}]|$)`, 'gui')
             let match: RegExpExecArray | null
             while ((match = regex.exec(segText)) !== null) {
               matchFound = true
@@ -868,6 +870,22 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [fillerOccurrences, pauseSegments, activePlayTime])
 
+  const pausePlayer = () => {
+    const player = ytPlayerRef.current || ytPlayer
+    if (player && typeof player.pauseVideo === 'function') {
+      try { player.pauseVideo() } catch {}
+    }
+    const iframe = document.getElementById('youtube-sync-iframe') as HTMLIFrameElement | null
+    if (iframe && iframe.contentWindow) {
+      try {
+        iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'pauseVideo', args: [] }), '*')
+      } catch {}
+    }
+    if (playbackRef.current) {
+      try { playbackRef.current.pause() } catch {}
+    }
+  }
+
   useEffect(() => {
     if (!isSupercutActive || !fillerOccurrences.length) return
 
@@ -875,10 +893,12 @@ function App() {
     let snippetTimer: any = null
     let pollTimer: any = null
     let isAdvancing = false
+    let lastSeekTime = 0
 
     const playSnippet = (index: number) => {
       if (index >= fillerOccurrences.length) {
         setIsSupercutActive(false)
+        pausePlayer()
         return
       }
 
@@ -888,12 +908,13 @@ function App() {
       if (!occ) return
 
       const startTime = Math.max(0, occ.start - 0.12)
-      const snippetDuration = Math.max(0.65, Math.min(2.2, (occ.end - occ.start) + 0.25))
+      const snippetDuration = Math.max(0.7, Math.min(2.5, (occ.end - occ.start) + 0.35))
+      lastSeekTime = Date.now()
       seekAndPlay(startTime)
 
       if (snippetTimer) clearTimeout(snippetTimer)
 
-      // Fallback timer: guarantees advancement even if playback events lag or are silent
+      // Fallback timer: guarantees advancement if audio lags
       snippetTimer = setTimeout(() => {
         advanceNext()
       }, snippetDuration * 1000)
@@ -909,9 +930,10 @@ function App() {
         setTimeout(() => {
           isAdvancing = false
           playSnippet(nextIndex)
-        }, 50)
+        }, 80)
       } else {
         setIsSupercutActive(false)
+        pausePlayer()
       }
     }
 
@@ -920,6 +942,9 @@ function App() {
 
     // Watch real-time playback position
     pollTimer = setInterval(() => {
+      // Ignore outdated player positions within 300ms of seeking
+      if (Date.now() - lastSeekTime < 300) return
+
       let currentTime = 0
       const player = ytPlayerRef.current || ytPlayer
       if (player && typeof player.getCurrentTime === 'function') {
@@ -931,15 +956,16 @@ function App() {
       if (currentTime > 0) {
         setActivePlayTime(currentTime)
         const currentOcc = fillerOccurrences[currentIndex]
-        if (currentOcc && currentTime >= currentOcc.end + 0.15 && !isAdvancing) {
+        if (currentOcc && currentTime >= currentOcc.start && currentTime >= currentOcc.end + 0.12 && !isAdvancing) {
           advanceNext()
         }
       }
-    }, 80)
+    }, 60)
 
     return () => {
       if (snippetTimer) clearTimeout(snippetTimer)
       if (pollTimer) clearInterval(pollTimer)
+      pausePlayer()
     }
   }, [isSupercutActive, fillerOccurrences])
 
@@ -2808,7 +2834,14 @@ ${advice.summary}
                         <button
                           type="button"
                           className={isSupercutActive ? 'player-control-button supercut-btn active' : 'player-control-button supercut-btn'}
-                          onClick={() => setIsSupercutActive(!isSupercutActive)}
+                          onClick={() => {
+                            if (isSupercutActive) {
+                              setIsSupercutActive(false)
+                              pausePlayer()
+                            } else {
+                              setIsSupercutActive(true)
+                            }
+                          }}
                           disabled={!fillerOccurrences.length}
                         >
                           🎧 {isSupercutActive ? 'Supercut beenden' : 'Füllwort-Supercut abspielen'}
@@ -3374,37 +3407,37 @@ function Settings({
 // Multi-variant mappings for common German hesitation sounds and filler phrases
 const FILLER_VARIANT_MAP: Record<string, string[][][]> = {
   "äh": [
-    [["äh", "ä", "ah", "aeh", "eh", "er", "öh", "oeh", "ähh", "ähhh", "ää", "äääh", "uh", "a"]]
+    [["äh", "ä", "ah", "aeh", "eh", "er", "öh", "oeh", "ähh", "ähhh", "ää", "äääh", "uh"]]
   ],
   "ähm": [
-    [["ähm", "m", "em", "mm", "mmm", "hm", "hmm", "hmmm", "ahm", "am", "öhm", "oehm", "uhm", "erm", "äm", "aem", "äähm", "äh", "aehm", "ehm"]]
+    [["ähm", "aehm", "ehm", "öhm", "oehm", "uhm", "erm", "äm", "aem", "äähm"]]
   ],
   "öh": [
-    [["öh", "oeh", "öhm", "ö", "uh", "er"]]
+    [["öh", "oeh", "ö", "öhh"]]
   ],
   "hm": [
-    [["hm", "hmm", "hmmm", "mhm", "m", "mm", "em"]]
+    [["hm", "hmm", "hmmm"]]
   ],
   "mhm": [
-    [["mhm", "mm-hmm", "mmhmm", "hm", "hmm"]]
+    [["mhm", "mm-hmm", "mmhmm"]]
   ],
   "also äh": [
-    [["also", "alzo"], ["äh", "ä", "ah", "aeh", "eh", "er", "öh", "oeh", "ähh", "ää", "uh", "a"]]
+    [["also", "alzo"], ["äh", "ä", "ah", "aeh", "eh", "er", "öh", "oeh", "ähh", "ää", "uh"]]
   ],
   "also ähm": [
-    [["also", "alzo"], ["ähm", "m", "em", "mm", "mmm", "hm", "hmm", "hmmm", "ahm", "am", "öhm", "uhm", "erm", "äm", "äähm", "ehm"]]
+    [["also", "alzo"], ["ähm", "aehm", "ehm", "öhm", "oehm", "uhm", "erm", "äm", "aem", "äähm"]]
   ],
   "aber äh": [
-    [["aber"], ["äh", "ä", "ah", "aeh", "eh", "er", "öh", "oeh", "ähh", "ää", "uh", "a"]]
+    [["aber"], ["äh", "ä", "ah", "aeh", "eh", "er", "öh", "oeh", "ähh", "ää", "uh"]]
   ],
   "aber ähm": [
-    [["aber"], ["ähm", "m", "em", "mm", "mmm", "hm", "hmm", "hmmm", "ahm", "am", "öhm", "uhm", "erm", "äm", "äähm", "ehm"]]
+    [["aber"], ["ähm", "aehm", "ehm", "öhm", "oehm", "uhm", "erm", "äm", "aem", "äähm"]]
   ],
   "und äh": [
-    [["und"], ["äh", "ä", "ah", "aeh", "eh", "er", "öh", "oeh", "ähh", "ää", "uh", "a"]]
+    [["und"], ["äh", "ä", "ah", "aeh", "eh", "er", "öh", "oeh", "ähh", "ää", "uh"]]
   ],
   "und ähm": [
-    [["und"], ["ähm", "m", "em", "mm", "mmm", "hm", "hmm", "hmmm", "ahm", "am", "öhm", "uhm", "erm", "äm", "äähm", "ehm"]]
+    [["und"], ["ähm", "aehm", "ehm", "öhm", "oehm", "uhm", "erm", "äm", "aem", "äähm"]]
   ],
   "sozusagen": [
     [["sozusagen", "sozusagn", "sozusage", "sozesagen", "sozusagens"]],
