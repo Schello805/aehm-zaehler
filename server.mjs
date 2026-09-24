@@ -1,12 +1,22 @@
 import express from 'express'
 import multer from 'multer'
 import { create as createYoutubeDl } from 'youtube-dl-exec'
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile, stat } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, createWriteStream } from 'node:fs'
+import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
+
+// Global crash protection — keep server running under all circumstances
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] Uncaught Exception:', err)
+})
+process.on('unhandledRejection', (reason) => {
+  console.error('[FATAL] Unhandled Rejection:', reason)
+})
 
 const projectRoot = process.cwd()
 
@@ -189,25 +199,27 @@ const parsePodcastRss = (xmlText) => {
 const resolveSpotifyPodcast = async (url) => {
   try {
     const decodedUrl = decodeURIComponent(url)
-    const epMatch = decodedUrl.match(/spotify\.com\/(?:episode|show|track)\/([^/?#&]+)/i) || decodedUrl.match(/spotify:(?:episode|show|track):([^/?#&]+)/i)
+    const epMatch = decodedUrl.match(/spotify\.com\/(episode|show|track)\/([^/?#&]+)/i) || decodedUrl.match(/spotify:(episode|show|track):([^/?#&]+)/i)
     if (!epMatch) return null
     
-    // Clean trailing tracking / context tokens (e.g. _UUID, %3A, :timestamp)
-    let epId = epMatch[1].trim()
+    const type = epMatch[1].toLowerCase()
+    let epId = epMatch[2].trim()
     if (epId.includes('_') || epId.includes(':')) {
       epId = epId.split(/[_:]/)[0]
     }
-    console.log('[spotify] Resolving clean episode ID:', epId)
+    console.log(`[spotify] Resolving clean Spotify ${type} ID:`, epId)
 
     let title = ''
     let showName = ''
     let duration = 0
     let thumbnail = ''
 
-    // 1. Try Spotify embed page (contains full JSON with show name + duration)
+    // Method 1: Try Spotify embed page (Next.js data)
     try {
-      const embedRes = await fetch(`https://open.spotify.com/embed/episode/${epId}`, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      const embedRes = await fetch(`https://open.spotify.com/embed/${type}/${epId}`, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        },
         signal: AbortSignal.timeout(8000)
       })
       if (embedRes.ok) {
@@ -219,87 +231,126 @@ const resolveSpotifyPodcast = async (url) => {
             const entity = json?.props?.pageProps?.state?.data?.entity
             if (entity) {
               title = entity.title || entity.name || ''
-              showName = entity.subtitle || ''
+              showName = entity.subtitle || (type === 'show' ? (entity.name || entity.title || '') : '')
               duration = Math.round(Number(entity.duration || 0) / 1000)
+              if (entity.coverArt?.sources?.[0]?.url) {
+                thumbnail = entity.coverArt.sources[0].url
+              }
             }
-          } catch {}
+          } catch (e) {
+            console.warn('[spotify] Embed JSON parse error:', e?.message)
+          }
         }
       }
     } catch (e) {
-      console.warn('[spotify] Embed parse note:', e?.message)
+      console.warn('[spotify] Embed fetch note:', e?.message)
     }
 
-    // 2. Fallback to Spotify official oEmbed
-    if (!title) {
+    // Method 2: Try Direct Page with Facebook Bot UA (Spotify returns rich OpenGraph tags for FB bot)
+    if (!title || !showName) {
       try {
-        const oeRes = await fetch(`https://open.spotify.com/oembed?url=https://open.spotify.com/episode/${epId}`, {
-          signal: AbortSignal.timeout(6000)
+        const fbRes = await fetch(`https://open.spotify.com/${type}/${epId}`, {
+          headers: {
+            'User-Agent': 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)'
+          },
+          signal: AbortSignal.timeout(8000)
         })
-        if (oeRes.ok) {
-          const oe = await oeRes.json()
-          title = oe.title || ''
-          thumbnail = oe.thumbnail_url || ''
+        if (fbRes.ok) {
+          const html = await fbRes.text()
+          const ogTitle = html.match(/<meta property="og:title" content="([^"]+)"/i)?.[1]
+          const ogDesc = html.match(/<meta property="og:description" content="([^"]+)"/i)?.[1]
+          const ogImg = html.match(/<meta property="og:image" content="([^"]+)"/i)?.[1]
+          
+          if (ogTitle && !ogTitle.includes('Spotify')) {
+            title = ogTitle
+          }
+          if (ogDesc && ogDesc.includes('·')) {
+            const parts = ogDesc.split('·').map(s => s.trim())
+            if (parts.length >= 2) {
+              showName = parts[1]
+            }
+          } else if (type === 'show' && ogTitle) {
+            showName = ogTitle
+          }
+          if (!thumbnail && ogImg) {
+            thumbnail = ogImg
+          }
         }
       } catch (e) {
-        console.warn('[spotify] oEmbed parse note:', e?.message)
+        console.warn('[spotify] FB Bot fetch note:', e?.message)
       }
     }
 
-    // 3. Resolve Direct MP3 from iTunes / Podcast RSS Feed
+    console.log('[spotify] Extracted title:', title, '| showName:', showName, '| duration:', duration)
+
+    // Method 3: Resolve Direct MP3 from iTunes / Podcast RSS Feed
     if (showName || title) {
-      const searchQuery = showName || title.split('-')[0].trim()
-      try {
-        const itunesRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(searchQuery)}&entity=podcast&limit=5`, {
-          signal: AbortSignal.timeout(8000)
-        })
-        if (itunesRes.ok) {
-          const data = await itunesRes.json()
-          const feedUrl = data.results?.[0]?.feedUrl
-          if (feedUrl) {
-            console.log('[spotify] Found Podcast RSS:', feedUrl)
-            const rssRes = await fetch(feedUrl, {
-              headers: { 'User-Agent': 'Mozilla/5.0' },
-              signal: AbortSignal.timeout(12000)
-            })
-            if (rssRes.ok) {
-              const xml = await rssRes.text()
-              const items = xml.match(/<item[\s\S]*?<\/item>/gi) || []
+      const searchQueries = [
+        showName,
+        title.split('-')[0].trim(),
+        title.replace(/#\d+/g, '').trim()
+      ].filter(Boolean)
 
-              const epNumMatch = title.match(/(?:#|Nr\.?|Ep\.?|Folge\s*)(\d+)/i)
-              const epNum = epNumMatch ? epNumMatch[1] : null
-              const cleanTitle = title.replace(/#\d+/g, '').trim().toLowerCase()
+      for (const query of searchQueries) {
+        try {
+          console.log('[spotify] Trying iTunes search for podcast:', query)
+          const itunesRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=podcast&limit=5`, {
+            signal: AbortSignal.timeout(8000)
+          })
+          if (itunesRes.ok) {
+            const data = await itunesRes.json()
+            const feedUrl = data.results?.[0]?.feedUrl
+            if (feedUrl) {
+              console.log('[spotify] Found Podcast RSS:', feedUrl)
+              const rssRes = await fetch(feedUrl, {
+                headers: { 'User-Agent': 'Mozilla/5.0' },
+                signal: AbortSignal.timeout(12000)
+              })
+              if (rssRes.ok) {
+                const xml = await rssRes.text()
+                const items = xml.match(/<item[\s\S]*?<\/item>/gi) || []
 
-              for (const item of items) {
-                const itemTitleMatch = item.match(/<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?<\/title>/i)
-                const itemTitle = (itemTitleMatch ? itemTitleMatch[1] : '').trim()
-                const audioMatch = item.match(/<enclosure[^>]+url="([^"]+)"/i)
-                const audioUrl = audioMatch ? audioMatch[1] : ''
+                const epNumMatch = title.match(/(?:#|Nr\.?|Ep\.?|Folge\s*)(\d+)/i)
+                const epNum = epNumMatch ? epNumMatch[1] : null
+                const cleanTitle = title.replace(/#\d+/g, '').replace(/[^\w\s]/g, '').trim().toLowerCase()
 
-                if (!audioUrl) continue
+                for (const item of items) {
+                  const itemTitleMatch = item.match(/<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?<\/title>/i)
+                  const itemTitle = (itemTitleMatch ? itemTitleMatch[1] : '').trim()
+                  const audioMatch = item.match(/<enclosure[^>]+url="([^"]+)"/i)
+                  const audioUrl = audioMatch ? audioMatch[1] : ''
 
-                let isMatch = false
-                if (epNum && itemTitle.includes(epNum)) {
-                  isMatch = true
-                } else if (cleanTitle.length > 4 && itemTitle.toLowerCase().includes(cleanTitle)) {
-                  isMatch = true
-                }
+                  if (!audioUrl) continue
 
-                if (isMatch) {
-                  console.log('[spotify] DIRECT MP3 FOUND:', audioUrl)
-                  return {
-                    title: showName ? `${showName} – ${itemTitle}` : itemTitle,
-                    uploader: showName || 'Podcast',
-                    duration: duration || 0,
-                    thumbnail,
-                    directAudioUrl: audioUrl
+                  let isMatch = false
+                  if (type === 'show') {
+                    isMatch = true
+                  } else if (epNum && itemTitle.includes(epNum)) {
+                    isMatch = true
+                  } else if (cleanTitle.length > 3) {
+                    const cleanItemTitle = itemTitle.replace(/[^\w\s]/g, '').toLowerCase()
+                    if (cleanItemTitle.includes(cleanTitle) || cleanTitle.includes(cleanItemTitle)) {
+                      isMatch = true
+                    }
+                  }
+
+                  if (isMatch) {
+                    console.log('[spotify] DIRECT MP3 FOUND:', audioUrl)
+                    return {
+                      title: showName ? `${showName} – ${itemTitle}` : itemTitle,
+                      uploader: showName || 'Podcast',
+                      duration: duration || 0,
+                      thumbnail,
+                      directAudioUrl: audioUrl
+                    }
                   }
                 }
               }
             }
           }
+        } catch (e) {
+          console.warn('[spotify] iTunes error for query', query, e?.message)
         }
-      } catch (e) {
-        console.warn('[spotify] iTunes error:', e?.message)
       }
     }
 
@@ -912,16 +963,22 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
           console.log('[analyze] Metadata fetch note:', tErr?.message)
         }
 
+        let rawFilePath = null
+
         if (metadataInfo?.directAudioUrl) {
           console.log('[analyze] Direct audio/podcast stream detected:', metadataInfo.directAudioUrl)
           sendEvent({ type: 'status', stage: 'download', message: `Lade Audio „${mediaTitle || 'Podcast'}“ direkt...` })
           const audioRes = await fetch(metadataInfo.directAudioUrl, {
             headers: { 'User-Agent': 'Mozilla/5.0' },
-            signal: AbortSignal.timeout(60000),
+            signal: AbortSignal.timeout(120000),
           })
           if (!audioRes.ok) throw new Error(`Audio-Download fehlgeschlagen (HTTP ${audioRes.status})`)
-          const arrayBuffer = await audioRes.arrayBuffer()
-          file = { buffer: Buffer.from(arrayBuffer), originalname: 'audio.mp3', mimetype: 'audio/mpeg' }
+          rawFilePath = join(temporaryDirectory, 'direct-audio.mp3')
+          const writeStream = createWriteStream(rawFilePath)
+          await pipeline(Readable.fromWeb(audioRes.body), writeStream)
+          const audioStats = await stat(rawFilePath)
+          console.log('[analyze] Direct audio downloaded to disk, size:', audioStats.size)
+          file = { path: rawFilePath, originalname: `${mediaTitle || 'audio'}.mp3`, mimetype: 'audio/mpeg', size: audioStats.size }
         } else {
           const output = join(temporaryDirectory, 'audio.%(ext)s')
           
@@ -963,9 +1020,10 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
           if (!downloadedFileName) {
             throw new Error('Die heruntergeladene Audiodatei konnte im temporären Verzeichnis nicht gefunden werden.')
           }
-          const downloadedFilePath = join(temporaryDirectory, downloadedFileName)
-          file = { buffer: await readFile(downloadedFilePath), originalname: 'linked-media.mp3', mimetype: 'audio/mpeg' }
-          console.log('[analyze] Download complete, file:', downloadedFileName, 'size:', file.buffer.length)
+          rawFilePath = join(temporaryDirectory, downloadedFileName)
+          const dlStats = await stat(rawFilePath)
+          file = { path: rawFilePath, originalname: 'linked-media.mp3', mimetype: 'audio/mpeg', size: dlStats.size }
+          console.log('[analyze] Download complete, file:', downloadedFileName, 'size:', dlStats.size)
         }
       }
 
@@ -973,21 +1031,21 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
         sendEvent({ type: 'error', error: 'Bitte eine Datei oder einen Link angeben.' })
         return response.end()
       }
-      console.log('[analyze] File:', file.originalname, 'size:', file.buffer.length, 'mime:', file.mimetype)
-
-      if (file.buffer.length > 24 * 1024 * 1024 || file.mimetype === 'video/mp4') {
-        console.log('[analyze] Compressing with ffmpeg...')
-        sendEvent({ type: 'status', stage: 'converting', message: 'Optimiere Audio für Whisper KI...' })
-        const inputPath = join(temporaryDirectory, 'input-media')
-        const compressedPath = join(temporaryDirectory, 'compressed.mp3')
-        await writeFile(inputPath, file.buffer)
-        await runCommand('ffmpeg', ['-y', '-i', inputPath, '-vn', '-ac', '1', '-ar', '16000', '-b:a', '48k', compressedPath], { timeout: 10 * 60 * 1000 })
-        file = { buffer: await readFile(compressedPath), originalname: 'compressed-audio.mp3', mimetype: 'audio/mpeg' }
-        console.log('[analyze] Compressed size:', file.buffer.length)
-      }
 
       const workingAudioPath = join(temporaryDirectory, 'prepared-audio.mp3')
-      await writeFile(workingAudioPath, file.buffer)
+      const inputPath = join(temporaryDirectory, 'input-media')
+
+      if (file.buffer) {
+        await writeFile(inputPath, file.buffer)
+        console.log('[analyze] Uploaded file saved to disk, size:', file.buffer.length)
+      } else if (file.path) {
+        // file is already at file.path on disk
+      }
+
+      const sourceAudioFile = file.path || inputPath
+      console.log('[analyze] Converting & optimizing audio for Whisper KI from:', sourceAudioFile)
+      sendEvent({ type: 'status', stage: 'converting', message: 'Optimiere Audio für Whisper KI...' })
+      await runCommand('ffmpeg', ['-y', '-i', sourceAudioFile, '-vn', '-ac', '1', '-ar', '16000', '-b:a', '48k', workingAudioPath], { timeout: 10 * 60 * 1000 })
 
       const pythonPath = getPythonPath()
       const scriptPath = getTranscriptionScript()

@@ -65,7 +65,8 @@ def main() -> None:
 
     audio_samples = None
     try:
-        audio_samples = decode_audio(str(input_path), sampling_rate=16000)
+        if input_path.stat().st_size < 40 * 1024 * 1024:
+            audio_samples = decode_audio(str(input_path), sampling_rate=16000)
     except Exception as e:
         sys.stderr.write(f'Audio decode warning: {e}\n')
 

@@ -1746,6 +1746,7 @@ ${advice.summary}
     }
 
     // Start background status polling in case proxy buffers or drops the SSE POST stream
+    let consecutivePollErrors = 0
     pollerInterval = setInterval(async () => {
       if (controller.signal.aborted || isCompleted) {
         if (pollerInterval) clearInterval(pollerInterval)
@@ -1754,6 +1755,7 @@ ${advice.summary}
       try {
         const res = await fetch(`/api/analyze-status/${jobId}`)
         if (res.ok) {
+          consecutivePollErrors = 0
           const statusData = await res.json()
           if (statusData.status === 'running' || statusData.status === 'initializing') {
             handleProgressUpdate(statusData)
@@ -1764,8 +1766,17 @@ ${advice.summary}
             setError(statusData.error || 'Analyse fehlgeschlagen.')
             setIsAnalyzing(false)
           }
+        } else {
+          consecutivePollErrors += 1
+          if (consecutivePollErrors > 15 && !isCompleted) {
+            if (pollerInterval) clearInterval(pollerInterval)
+            setError(`Server nicht erreichbar (${res.status}). Bitte überprüfe die Verbindung oder versuche es später noch einmal.`)
+            setIsAnalyzing(false)
+          }
         }
-      } catch {}
+      } catch {
+        consecutivePollErrors += 1
+      }
     }, 800)
 
     try {
