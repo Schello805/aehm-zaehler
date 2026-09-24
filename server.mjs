@@ -193,75 +193,114 @@ const resolveSpotifyPodcast = async (url) => {
     const epId = epMatch[1]
     console.log('[spotify] Resolving episode ID:', epId)
 
-    const res = await fetch(`https://open.spotify.com/episode/${epId}`, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-      signal: AbortSignal.timeout(10000)
-    })
-    if (!res.ok) return null
-    const html = await res.text()
+    let title = ''
+    let showName = ''
+    let duration = 0
+    let thumbnail = ''
 
-    const ogTitle = html.match(/<meta\s+property="og:title"\s+content="([^"]+)"/i)?.[1] || ''
-    const ogDesc = html.match(/<meta\s+property="og:description"\s+content="([^"]+)"/i)?.[1] || ''
-    const durationSec = Number(html.match(/<meta\s+name="music:duration"\s+content="([^"]+)"/i)?.[1] || 0)
-    const thumbnail = html.match(/<meta\s+property="og:image"\s+content="([^"]+)"/i)?.[1] || ''
-
-    const showName = ogDesc.split('·')[0].trim() || 'Podcast'
-    const episodeTitle = ogTitle || 'Episode'
-
-    // 1. Search iTunes / Apple Podcast Directory for the open RSS feed
-    const searchUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(showName)}&entity=podcast&limit=5`
-    const itunesRes = await fetch(searchUrl, { signal: AbortSignal.timeout(8000) })
-    if (itunesRes.ok) {
-      const itunesData = await itunesRes.json()
-      const feedUrl = itunesData.results?.[0]?.feedUrl
-      if (feedUrl) {
-        console.log('[spotify] Found RSS Feed URL:', feedUrl)
-        const rssRes = await fetch(feedUrl, {
-          headers: { 'User-Agent': 'Mozilla/5.0' },
-          signal: AbortSignal.timeout(15000)
-        })
-        if (rssRes.ok) {
-          const xml = await rssRes.text()
-          const items = xml.match(/<item[\s\S]*?<\/item>/gi) || []
-
-          const epNumMatch = episodeTitle.match(/(?:#|Nr\.?|Ep\.?|Folge\s*)(\d+)/i)
-          const epNum = epNumMatch ? epNumMatch[1] : null
-          const cleanEpTitle = episodeTitle.replace(/#\d+/g, '').trim().toLowerCase()
-
-          for (const item of items) {
-            const itemTitleMatch = item.match(/<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?<\/title>/i)
-            const itemTitle = (itemTitleMatch ? itemTitleMatch[1] : '').trim()
-            const audioMatch = item.match(/<enclosure[^>]+url="([^"]+)"/i)
-            const audioUrl = audioMatch ? audioMatch[1] : ''
-
-            if (!audioUrl) continue
-
-            let isMatch = false
-            if (epNum && itemTitle.includes(epNum)) {
-              isMatch = true
-            } else if (cleanEpTitle.length > 4 && itemTitle.toLowerCase().includes(cleanEpTitle)) {
-              isMatch = true
+    // 1. Try Spotify embed page (contains full JSON with show name + duration)
+    try {
+      const embedRes = await fetch(`https://open.spotify.com/embed/episode/${epId}`, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+        signal: AbortSignal.timeout(8000)
+      })
+      if (embedRes.ok) {
+        const html = await embedRes.text()
+        const match = html.match(/<script id="__NEXT_DATA__"[^>]*>(.*?)<\/script>/s) || html.match(/{"props":[\s\S]*?"audioPreview"[\s\S]*?}/)
+        if (match) {
+          try {
+            const json = JSON.parse(match[1] || match[0])
+            const entity = json?.props?.pageProps?.state?.data?.entity
+            if (entity) {
+              title = entity.title || entity.name || ''
+              showName = entity.subtitle || ''
+              duration = Math.round(Number(entity.duration || 0) / 1000)
             }
+          } catch {}
+        }
+      }
+    } catch (e) {
+      console.warn('[spotify] Embed parse note:', e?.message)
+    }
 
-            if (isMatch) {
-              console.log('[spotify] Resolved direct audio MP3 URL from RSS:', audioUrl)
-              return {
-                title: `${showName} – ${itemTitle}`,
-                uploader: showName,
-                duration: durationSec,
-                thumbnail,
-                directAudioUrl: audioUrl
+    // 2. Fallback to Spotify official oEmbed
+    if (!title) {
+      try {
+        const oeRes = await fetch(`https://open.spotify.com/oembed?url=https://open.spotify.com/episode/${epId}`, {
+          signal: AbortSignal.timeout(6000)
+        })
+        if (oeRes.ok) {
+          const oe = await oeRes.json()
+          title = oe.title || ''
+          thumbnail = oe.thumbnail_url || ''
+        }
+      } catch (e) {
+        console.warn('[spotify] oEmbed parse note:', e?.message)
+      }
+    }
+
+    // 3. Resolve Direct MP3 from iTunes / Podcast RSS Feed
+    if (showName || title) {
+      const searchQuery = showName || title.split('-')[0].trim()
+      try {
+        const itunesRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(searchQuery)}&entity=podcast&limit=5`, {
+          signal: AbortSignal.timeout(8000)
+        })
+        if (itunesRes.ok) {
+          const data = await itunesRes.json()
+          const feedUrl = data.results?.[0]?.feedUrl
+          if (feedUrl) {
+            console.log('[spotify] Found Podcast RSS:', feedUrl)
+            const rssRes = await fetch(feedUrl, {
+              headers: { 'User-Agent': 'Mozilla/5.0' },
+              signal: AbortSignal.timeout(12000)
+            })
+            if (rssRes.ok) {
+              const xml = await rssRes.text()
+              const items = xml.match(/<item[\s\S]*?<\/item>/gi) || []
+
+              const epNumMatch = title.match(/(?:#|Nr\.?|Ep\.?|Folge\s*)(\d+)/i)
+              const epNum = epNumMatch ? epNumMatch[1] : null
+              const cleanTitle = title.replace(/#\d+/g, '').trim().toLowerCase()
+
+              for (const item of items) {
+                const itemTitleMatch = item.match(/<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?<\/title>/i)
+                const itemTitle = (itemTitleMatch ? itemTitleMatch[1] : '').trim()
+                const audioMatch = item.match(/<enclosure[^>]+url="([^"]+)"/i)
+                const audioUrl = audioMatch ? audioMatch[1] : ''
+
+                if (!audioUrl) continue
+
+                let isMatch = false
+                if (epNum && itemTitle.includes(epNum)) {
+                  isMatch = true
+                } else if (cleanTitle.length > 4 && itemTitle.toLowerCase().includes(cleanTitle)) {
+                  isMatch = true
+                }
+
+                if (isMatch) {
+                  console.log('[spotify] DIRECT MP3 FOUND:', audioUrl)
+                  return {
+                    title: showName ? `${showName} – ${itemTitle}` : itemTitle,
+                    uploader: showName || 'Podcast',
+                    duration: duration || 0,
+                    thumbnail,
+                    directAudioUrl: audioUrl
+                  }
+                }
               }
             }
           }
         }
+      } catch (e) {
+        console.warn('[spotify] iTunes error:', e?.message)
       }
     }
 
     return {
-      title: `${showName} – ${episodeTitle}`,
-      uploader: showName,
-      duration: durationSec,
+      title: showName ? `${showName} – ${title}` : title || 'Spotify Episode',
+      uploader: showName || 'Spotify',
+      duration: duration || 0,
       thumbnail
     }
   } catch (err) {

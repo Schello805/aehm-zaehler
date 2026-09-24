@@ -1276,6 +1276,8 @@ ${advice.summary}
       let resolvedTitle = ''
       let resolvedUploader = ''
 
+      const isSpotify = /spotify\.com\/(?:episode|show|track)\/([a-zA-Z0-9]+)/i.test(trimmed)
+
       // 1. Fast direct client-side oEmbed for YouTube (instant 50ms)
       if (isYouTube) {
         try {
@@ -1297,6 +1299,28 @@ ${advice.summary}
           }
         } catch (oeErr) {
           console.warn('oEmbed client fetch note:', oeErr)
+        }
+      } else if (isSpotify) {
+        // Fast direct client-side oEmbed for Spotify
+        try {
+          const oeRes = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(trimmed)}`)
+          if (oeRes.ok) {
+            const oeData = await oeRes.json()
+            if (oeData?.title) {
+              resolvedTitle = oeData.title
+              resolvedUploader = oeData.provider_name || 'Spotify'
+              if (!isCancelled) {
+                setFetchedMediaInfo({
+                  title: resolvedTitle,
+                  uploader: resolvedUploader,
+                  duration: 0,
+                })
+                setAnalysisTitle((prev) => prev ? prev : resolvedTitle)
+              }
+            }
+          }
+        } catch (oeErr) {
+          console.warn('Spotify oEmbed client note:', oeErr)
         }
       }
 
