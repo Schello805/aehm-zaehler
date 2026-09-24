@@ -58,14 +58,10 @@ export function LegalModal({ tab, setTab, onClose }: LegalModalProps) {
                 <h3>Diensteanbieter</h3>
                 <p>
                   <strong>Michael Schellenberger</strong><br />
+                  Ziegeleistraße 32<br />
                   91572 Bechhofen<br />
                   Deutschland
                 </p>
-                <div className="legal-hint-box">
-                  <small>
-                    ℹ️ <em>Hinweis nach § 5 Abs. 1 Nr. 1 DDG: Für die vollständige Erfüllung der Anbieterkennzeichnungspflicht im geschäftsmäßigen Verkehr ist in Deutschland die Angabe einer ladungsfähigen Anschrift (inkl. Straßenbezeichnung und Hausnummer) erforderlich.</em>
-                  </small>
-                </div>
               </section>
 
               <section className="legal-section">
@@ -80,6 +76,7 @@ export function LegalModal({ tab, setTab, onClose }: LegalModalProps) {
                 <h3>Verantwortlich für den Inhalt nach § 18 Abs. 2 MStV</h3>
                 <p>
                   Michael Schellenberger<br />
+                  Ziegeleistraße 32<br />
                   91572 Bechhofen
                 </p>
               </section>
@@ -140,6 +137,7 @@ export function LegalModal({ tab, setTab, onClose }: LegalModalProps) {
                 <p>
                   Verantwortlich für die Datenverarbeitung auf dieser Website ist:<br /><br />
                   <strong>Michael Schellenberger</strong><br />
+                  Ziegeleistraße 32<br />
                   91572 Bechhofen<br />
                   Telefon: <a href="tel:098229899386">09822 9899386</a><br />
                   E-Mail: <a href="mailto:info@schellenberger.biz">info@schellenberger.biz</a>
