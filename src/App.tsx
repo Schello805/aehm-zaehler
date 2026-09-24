@@ -1389,7 +1389,7 @@ ${advice.summary}
           console.warn('oEmbed client fetch note:', oeErr)
         }
       } else if (isSpotify) {
-        // Fast direct client-side podcast stream resolution for Spotify
+        // Fast instant title feedback via Spotify oEmbed (CORS enabled)
         try {
           const decodedUrl = decodeURIComponent(trimmed)
           const epMatch = decodedUrl.match(/spotify\.com\/(?:episode|show|track)\/([^/?#&]+)/i) || decodedUrl.match(/spotify:(?:episode|show|track):([^/?#&]+)/i)
@@ -1399,72 +1399,28 @@ ${advice.summary}
           }
 
           if (epId) {
-            // 1. Get Title from Spotify oEmbed (CORS enabled)
-            let spotifyTitle = ''
             try {
               const oeRes = await fetch(`https://open.spotify.com/oembed?url=https://open.spotify.com/episode/${epId}`)
               if (oeRes.ok) {
                 const oeData = await oeRes.json()
-                spotifyTitle = oeData.title || ''
-              }
-            } catch {}
-
-            // 2. Resolve direct Podcast RSS MP3 (CORS enabled on iTunes & Megaphone)
-            let directAudioUrl = ''
-            let showName = ''
-            const searchTerms = ['Gemischtes Hack', 'Fest und Flauschig', 'Hobbylos', 'Kaulitz Hills', 'Baywatch Berlin', 'Lanz & Precht', spotifyTitle]
-            for (const term of searchTerms) {
-              if (!term || directAudioUrl) break
-              try {
-                const itunesRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(term)}&entity=podcast&limit=3`)
-                if (itunesRes.ok) {
-                  const itunesData = await itunesRes.json()
-                  const feedUrl = itunesData.results?.[0]?.feedUrl
-                  const collName = itunesData.results?.[0]?.collectionName
-                  if (feedUrl) {
-                    const rssRes = await fetch(feedUrl)
-                    if (rssRes.ok) {
-                      const xml = await rssRes.text()
-                      const items = xml.match(/<item[\s\S]*?<\/item>/gi) || []
-                      const epNumMatch = spotifyTitle.match(/(?:#|Nr\.?|Ep\.?|Folge\s*)(\d+)/i)
-                      const epNum = epNumMatch ? epNumMatch[1] : null
-                      const cleanTitle = spotifyTitle.replace(/#\d+/g, '').trim().toLowerCase()
-
-                      for (const item of items) {
-                        const itemTitleMatch = item.match(/<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?<\/title>/i)
-                        const itemTitle = (itemTitleMatch ? itemTitleMatch[1] : '').trim()
-                        const audioMatch = item.match(/<enclosure[^>]+url="([^"]+)"/i)
-                        const audioUrl = audioMatch ? audioMatch[1] : ''
-                        if (!audioUrl) continue
-
-                        if ((epNum && itemTitle.includes(epNum)) || (cleanTitle.length > 4 && itemTitle.toLowerCase().includes(cleanTitle))) {
-                          directAudioUrl = audioUrl
-                          showName = collName || 'Podcast'
-                          spotifyTitle = `${showName} – ${itemTitle}`
-                          break
-                        }
-                      }
-                    }
+                if (oeData.title) {
+                  resolvedTitle = oeData.title
+                  resolvedUploader = 'Spotify'
+                  if (!isCancelled) {
+                    setFetchedMediaInfo((prev) => ({
+                      title: resolvedTitle,
+                      uploader: resolvedUploader,
+                      duration: prev?.duration || 0,
+                      directAudioUrl: prev?.directAudioUrl,
+                    }))
+                    setAnalysisTitle((prev) => prev ? prev : resolvedTitle)
                   }
                 }
-              } catch {}
-            }
-
-            resolvedTitle = spotifyTitle || 'Spotify Podcast'
-            resolvedUploader = showName || 'Spotify'
-
-            if (!isCancelled) {
-              setFetchedMediaInfo({
-                title: resolvedTitle,
-                uploader: resolvedUploader,
-                duration: 0,
-                directAudioUrl: directAudioUrl || undefined,
-              })
-              setAnalysisTitle((prev) => prev ? prev : resolvedTitle)
-            }
+              }
+            } catch {}
           }
         } catch (spotifyErr) {
-          console.warn('Spotify client resolver note:', spotifyErr)
+          console.warn('Spotify oEmbed note:', spotifyErr)
         }
       }
 
