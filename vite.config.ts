@@ -12,6 +12,10 @@ export default defineConfig({
         timeout: 0,
         proxyTimeout: 0,
       },
+      '/verify-delete-password': {
+        target: 'http://127.0.0.1:8787',
+        changeOrigin: true,
+      },
     },
   },
 })

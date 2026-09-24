@@ -1171,7 +1171,7 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000)
 
-app.post('/api/admin/verify-delete-password', (request, response) => {
+const handleVerifyDeletePassword = (request, response) => {
   const ip = getClientIp(request)
   const now = Date.now()
   let record = deleteAttemptsByIp.get(ip)
@@ -1230,7 +1230,11 @@ app.post('/api/admin/verify-delete-password', (request, response) => {
     success: true,
     message: 'Passwort erfolgreich verifiziert.',
   })
-})
+}
+
+app.post('/api/admin/verify-delete-password', handleVerifyDeletePassword)
+app.post('/api/verify-delete-password', handleVerifyDeletePassword)
+app.post('/verify-delete-password', handleVerifyDeletePassword)
 
 const distDirectory = join(projectRoot, 'dist')
 if (existsSync(distDirectory)) {

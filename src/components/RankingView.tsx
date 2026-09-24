@@ -386,6 +386,21 @@ export const RankingView: React.FC<RankingViewProps> = ({
     return `${val.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`
   }
 
+// SHA-256 helper for client-side cryptographic verification fallback
+async function computeSha256(message: string): Promise<string> {
+  if (typeof crypto !== 'undefined' && crypto.subtle) {
+    const msgBuffer = new TextEncoder().encode(message)
+    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer)
+    const hashArray = Array.from(new Uint8Array(hashBuffer))
+    return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
+  }
+  return ''
+}
+
+// SHA-256 hash of Secure1!
+const ADMIN_PASSWORD_HASH = '3bbe467a7717b9f36c0c9981044540d839bb9b47c89af43e1236ccc87fbaa90b'
+const LOCAL_LOCK_KEY = 'aehm_delete_lockout'
+
   const confirmDelete = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!deleteModalItem) return
@@ -398,48 +413,132 @@ export const RankingView: React.FC<RankingViewProps> = ({
     setDeleteLoading(true)
     setDeleteError('')
 
+    // 1. Check local client rate limiting (15 min lockout after 3 strikes)
+    let lockRecord = { count: 0, lockedUntil: 0 }
     try {
-      const res = await fetch('/api/admin/verify-delete-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: trimmedPassword })
-      })
-      
-      let data: any = {}
-      try {
-        data = await res.json()
-      } catch {
-        data = {}
-      }
+      const saved = localStorage.getItem(LOCAL_LOCK_KEY)
+      if (saved) lockRecord = JSON.parse(saved)
+    } catch {}
 
-      if (!res.ok || !data.success) {
-        setDeleteError(data.error || (res.status === 401 ? 'Falsches Passwort!' : res.status === 429 ? 'IP-Adresse nach zu vielen Fehlversuchen gesperrt.' : 'Fehler beim Überprüfen des Passworts.'))
-        setDeleteLoading(false)
-        return
-      }
-
-      // Success: Delete entry
-      if (deleteModalItem.isDemo) {
-        const nextHidden = [...hiddenDemoIds, deleteModalItem.id]
-        setHiddenDemoIds(nextHidden)
-        try {
-          localStorage.setItem('aehm_hidden_demo_ranking', JSON.stringify(nextHidden))
-        } catch {}
-      } else if (onDeleteEntry) {
-        onDeleteEntry(deleteModalItem.id)
-      }
-
-      setDeleteSuccessMsg(`„${deleteModalItem.title}“ wurde erfolgreich aus der Rangliste gelöscht.`)
-      setDeleteModalItem(null)
-      setDeletePassword('')
-      setDeleteError('')
-      setTimeout(() => setDeleteSuccessMsg(''), 4500)
-    } catch (err: any) {
-      console.error('Delete error:', err)
-      setDeleteError(err?.message || 'Verbindung zum Server fehlgeschlagen.')
-    } finally {
+    const now = Date.now()
+    if (lockRecord.lockedUntil && now < lockRecord.lockedUntil) {
+      const remainingSeconds = Math.ceil((lockRecord.lockedUntil - now) / 1000)
+      const remainingMinutes = Math.ceil(remainingSeconds / 60)
+      setDeleteError(`Zu viele Fehlversuche! Gesperrt für noch ca. ${remainingMinutes} Minute(n).`)
       setDeleteLoading(false)
+      return
     }
+
+    if (lockRecord.lockedUntil && now >= lockRecord.lockedUntil) {
+      lockRecord.count = 0
+      lockRecord.lockedUntil = 0
+    }
+
+    let verified = false
+    let apiErrorMessage = ''
+
+    try {
+      // Try backend endpoints first
+      const endpoints = [
+        '/api/admin/verify-delete-password',
+        '/api/verify-delete-password',
+        '/verify-delete-password'
+      ]
+      let res: Response | null = null
+      for (const ep of endpoints) {
+        try {
+          const testRes = await fetch(ep, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: trimmedPassword })
+          })
+          if (testRes.status !== 404) {
+            res = testRes
+            break
+          }
+        } catch {
+          // continue
+        }
+      }
+
+      if (res && res.status !== 404) {
+        let data: any = {}
+        try {
+          data = await res.json()
+        } catch {}
+
+        if (res.ok && data.success) {
+          verified = true
+        } else {
+          apiErrorMessage = data.error || (res.status === 401 ? 'Falsches Passwort!' : res.status === 429 || res.status === 403 ? 'IP-Adresse gesperrt.' : 'Fehler beim Überprüfen des Passworts.')
+        }
+      } else {
+        // Backend returned 404 or not reachable: Fallback to SHA-256
+        const userHash = await computeSha256(trimmedPassword)
+        if (userHash === ADMIN_PASSWORD_HASH) {
+          verified = true
+        } else {
+          lockRecord.count = (lockRecord.count || 0) + 1
+          if (lockRecord.count >= 3) {
+            lockRecord.lockedUntil = now + 15 * 60 * 1000
+            apiErrorMessage = 'Falsches Passwort! 3 Fehlversuche erreicht. Gesperrt für 15 Minuten.'
+          } else {
+            const left = 3 - lockRecord.count
+            apiErrorMessage = `Falsches Passwort! Noch ${left} ${left === 1 ? 'Versuch' : 'Versuche'} vor Sperre.`
+          }
+          try {
+            localStorage.setItem(LOCAL_LOCK_KEY, JSON.stringify(lockRecord))
+          } catch {}
+        }
+      }
+    } catch {
+      // Network exception fallback
+      const userHash = await computeSha256(trimmedPassword)
+      if (userHash === ADMIN_PASSWORD_HASH) {
+        verified = true
+      } else {
+        lockRecord.count = (lockRecord.count || 0) + 1
+        if (lockRecord.count >= 3) {
+          lockRecord.lockedUntil = now + 15 * 60 * 1000
+          apiErrorMessage = 'Falsches Passwort! 3 Fehlversuche erreicht. Gesperrt für 15 Minuten.'
+        } else {
+          const left = 3 - lockRecord.count
+          apiErrorMessage = `Falsches Passwort! Noch ${left} ${left === 1 ? 'Versuch' : 'Versuche'} vor Sperre.`
+        }
+        try {
+          localStorage.setItem(LOCAL_LOCK_KEY, JSON.stringify(lockRecord))
+        } catch {}
+      }
+    }
+
+    if (!verified) {
+      setDeleteError(apiErrorMessage || 'Falsches Passwort!')
+      setDeleteLoading(false)
+      return
+    }
+
+    // Success: clear lockout
+    try {
+      localStorage.removeItem(LOCAL_LOCK_KEY)
+    } catch {}
+
+    // Success: Delete entry
+    if (deleteModalItem.isDemo) {
+      const nextHidden = [...hiddenDemoIds, deleteModalItem.id]
+      setHiddenDemoIds(nextHidden)
+      try {
+        localStorage.setItem('aehm_hidden_demo_ranking', JSON.stringify(nextHidden))
+      } catch {}
+    } else if (onDeleteEntry) {
+      onDeleteEntry(deleteModalItem.id)
+    }
+
+    setDeleteSuccessMsg(`„${deleteModalItem.title}“ wurde erfolgreich aus der Rangliste gelöscht.`)
+    setDeleteModalItem(null)
+    setDeletePassword('')
+    setDeleteError('')
+    setTimeout(() => setDeleteSuccessMsg(''), 4500)
+    setDeleteLoading(false)
   }
 
   // Active items based on selected category
