@@ -55,6 +55,7 @@ export type FillerOccurrence = {
   start: number
   end: number
   word: string
+  canonicalWord?: string
   speakerId?: string
   speakerName?: string
   text?: string
@@ -392,6 +393,8 @@ function App() {
   const [showSelfHostModal, setShowSelfHostModal] = useState(false)
   const [legalModalTab, setLegalModalTab] = useState<LegalTab | null>(null)
   const [speakerFilter, setSpeakerFilter] = useState<string>('all')
+  const [sniperSpeakerFilter, setSniperSpeakerFilter] = useState<string>('all')
+  const [sniperWordFilter, setSniperWordFilter] = useState<string>('all')
   const [editingSpeakerId, setEditingSpeakerId] = useState<string | null>(null)
   const [editingSpeakerName, setEditingSpeakerName] = useState<string>('')
 
@@ -798,6 +801,31 @@ function App() {
     }
   }, [activeYoutubeId])
 
+  const speakerList = useMemo(() => {
+    if (!result) return []
+    if (result.speakers && Object.keys(result.speakers).length > 0) {
+      return Object.values(result.speakers)
+    }
+    const totalWords = result.totalWords || 0
+    const fillerWords = result.fillerWords || 0
+    const rawRate = result.relativeRate || 0
+    const calculatedRate = totalWords > 0 ? (fillerWords / totalWords) * 100 : (rawRate <= 1 ? rawRate * 100 : rawRate)
+    return [
+      {
+        id: 'speaker_1',
+        name: 'Sprecher 1',
+        color: '#3b82f6',
+        totalWords,
+        fillerWords,
+        baseFillerWords: fillerWords,
+        relativeRate: calculatedRate,
+        duration: result.duration || 0,
+        wpm: result.duration > 0 ? Math.round((totalWords / (result.duration / 60))) : 0,
+        counts: result.counts || {},
+      }
+    ]
+  }, [result])
+
   const fillerOccurrences = useMemo<FillerOccurrence[]>(() => {
     if (!result?.segments) return []
     const occurrences: FillerOccurrence[] = []
@@ -806,27 +834,30 @@ function App() {
       if (Array.isArray(seg.words) && seg.words.length > 0) {
         seg.words.forEach((w, wIndex) => {
           const wClean = String(w.clean || w.word || '').trim().toLowerCase().replace(/[^\p{L}\p{N}]/gu, '')
-          const matched = words.some((target) => {
+          let matchedTarget: string | null = null
+          for (const target of words) {
             const targetClean = target.trim().toLowerCase().replace(/[^\p{L}\p{N}]/gu, '')
-            if (!targetClean || !wClean) return false
-            if (wClean === targetClean) return true
-            if (targetClean === "äh") {
-              return matchesToken(wClean, AH_VARIANTS)
+            if (!targetClean || !wClean) continue
+            if (wClean === targetClean) { matchedTarget = target; break }
+            if (targetClean === "äh" && (matchesToken(wClean, AH_VARIANTS) || wClean === "äh")) {
+              matchedTarget = "äh"; break
             }
-            if (targetClean === "ähm") {
-              return matchesToken(wClean, AHM_VARIANTS)
+            if (targetClean === "ähm" && (matchesToken(wClean, AHM_VARIANTS) || wClean === "ähm")) {
+              matchedTarget = "ähm"; break
             }
-            if (targetClean.length > 3 && (wClean.startsWith(targetClean) || targetClean.startsWith(wClean))) return true
-            return false
-          })
-          if (matched) {
+            if (targetClean.length > 3 && (wClean.startsWith(targetClean) || targetClean.startsWith(wClean))) {
+              matchedTarget = target; break
+            }
+          }
+          if (matchedTarget) {
             occurrences.push({
               id: `occ-${segIndex}-${wIndex}-${w.start}`,
               segIndex,
               start: Math.max(0, Number(w.start || 0)),
               end: Math.max(Number(w.start || 0) + 0.35, Number(w.end || 0)),
-              word: w.word || 'äh',
-              speakerId: seg.speakerId,
+              word: w.word || matchedTarget,
+              canonicalWord: matchedTarget,
+              speakerId: seg.speakerId || 'speaker_1',
               speakerName: seg.speakerName,
               text: seg.text,
             })
@@ -855,7 +886,8 @@ function App() {
                 start: occStart,
                 end: occEnd,
                 word: match[0],
-                speakerId: seg.speakerId,
+                canonicalWord: targetWord,
+                speakerId: seg.speakerId || 'speaker_1',
                 speakerName: seg.speakerName,
                 text: seg.text,
               })
@@ -869,7 +901,8 @@ function App() {
               start: seg.start,
               end: seg.end,
               word: 'äh',
-              speakerId: seg.speakerId,
+              canonicalWord: 'äh',
+              speakerId: seg.speakerId || 'speaker_1',
               speakerName: seg.speakerName,
               text: seg.text,
             })
@@ -880,6 +913,49 @@ function App() {
 
     return occurrences.sort((a, b) => a.start - b.start)
   }, [result, words])
+
+  // Reset sniper filters when new result arrives
+  useEffect(() => {
+    setSniperSpeakerFilter('all')
+    setSniperWordFilter('all')
+  }, [result])
+
+  const availableWordsForSniper = useMemo(() => {
+    const countsMap: Record<string, number> = {}
+    fillerOccurrences.forEach((occ) => {
+      if (sniperSpeakerFilter !== 'all' && occ.speakerId && occ.speakerId !== sniperSpeakerFilter) {
+        return
+      }
+      const w = (occ.canonicalWord || occ.word || 'äh').toLowerCase()
+      countsMap[w] = (countsMap[w] || 0) + 1
+    })
+    return Object.entries(countsMap)
+      .map(([word, count]) => ({ word, count }))
+      .sort((a, b) => b.count - a.count)
+  }, [fillerOccurrences, sniperSpeakerFilter])
+
+  const activeFillerOccurrences = useMemo(() => {
+    return fillerOccurrences.filter((occ) => {
+      if (sniperSpeakerFilter !== 'all') {
+        const matchesSp = !occ.speakerId || occ.speakerId === sniperSpeakerFilter
+        if (!matchesSp) return false
+      }
+      if (sniperWordFilter !== 'all') {
+        const canon = (occ.canonicalWord || occ.word || '').trim().toLowerCase()
+        const target = sniperWordFilter.trim().toLowerCase()
+        if (target === 'äh') {
+          const occClean = canon.replace(/[^\p{L}\p{N}]/gu, '')
+          if (!matchesToken(occClean, AH_VARIANTS) && occClean !== 'äh') return false
+        } else if (target === 'ähm') {
+          const occClean = canon.replace(/[^\p{L}\p{N}]/gu, '')
+          if (!matchesToken(occClean, AHM_VARIANTS) && occClean !== 'ähm') return false
+        } else {
+          if (canon !== target && !canon.startsWith(target)) return false
+        }
+      }
+      return true
+    })
+  }, [fillerOccurrences, sniperSpeakerFilter, sniperWordFilter])
 
   const pauseSegments = useMemo(() => {
     if (!result?.segments || result.segments.length < 2) return []
@@ -908,12 +984,12 @@ function App() {
   }, [result])
 
   const currentFillerIndex = useMemo(() => {
-    if (!fillerOccurrences.length) return -1
-    const idx = fillerOccurrences.findIndex((occ) => activePlayTime >= occ.start - 0.25 && activePlayTime <= occ.end + 0.3)
+    if (!activeFillerOccurrences.length) return -1
+    const idx = activeFillerOccurrences.findIndex((occ) => activePlayTime >= occ.start - 0.25 && activePlayTime <= occ.end + 0.3)
     if (idx !== -1) return idx
-    const prevs = fillerOccurrences.filter((occ) => occ.start <= activePlayTime)
+    const prevs = activeFillerOccurrences.filter((occ) => occ.start <= activePlayTime)
     return prevs.length ? prevs.length - 1 : 0
-  }, [fillerOccurrences, activePlayTime])
+  }, [activeFillerOccurrences, activePlayTime])
 
   const currentPauseIndex = useMemo(() => {
     if (!pauseSegments.length) return -1
@@ -960,7 +1036,7 @@ function App() {
   }
 
   const jumpToFiller = (direction: 'next' | 'prev') => {
-    if (!fillerOccurrences.length) return
+    if (!activeFillerOccurrences.length) return
     let currentTime = activePlayTime
     const player = ytPlayerRef.current || ytPlayer
     if (player && typeof player.getCurrentTime === 'function') {
@@ -970,13 +1046,13 @@ function App() {
     }
 
     if (direction === 'next') {
-      const nextIndex = fillerOccurrences.findIndex((occ) => occ.start > currentTime + 0.2)
-      const idx = nextIndex !== -1 ? nextIndex : fillerOccurrences.length - 1
-      seekAndPlay(Math.max(0, fillerOccurrences[idx].start - 0.12))
+      const nextIndex = activeFillerOccurrences.findIndex((occ) => occ.start > currentTime + 0.2)
+      const idx = nextIndex !== -1 ? nextIndex : activeFillerOccurrences.length - 1
+      seekAndPlay(Math.max(0, activeFillerOccurrences[idx].start - 0.12))
     } else {
-      const prevOccs = fillerOccurrences.filter((occ) => occ.start < currentTime - 0.2)
-      const idx = prevOccs.length ? fillerOccurrences.indexOf(prevOccs[prevOccs.length - 1]) : 0
-      seekAndPlay(Math.max(0, fillerOccurrences[idx].start - 0.12))
+      const prevOccs = activeFillerOccurrences.filter((occ) => occ.start < currentTime - 0.2)
+      const idx = prevOccs.length ? activeFillerOccurrences.indexOf(prevOccs[prevOccs.length - 1]) : 0
+      seekAndPlay(Math.max(0, activeFillerOccurrences[idx].start - 0.12))
     }
   }
 
@@ -1029,8 +1105,8 @@ function App() {
       if (e.altKey && (e.key === ' ' || e.key === 'Enter')) {
         e.preventDefault()
         const idx = Math.max(0, currentFillerIndex)
-        if (fillerOccurrences[idx]) {
-          seekAndPlay(Math.max(0, fillerOccurrences[idx].start - 0.12))
+        if (activeFillerOccurrences[idx]) {
+          seekAndPlay(Math.max(0, activeFillerOccurrences[idx].start - 0.12))
         }
       } else if (e.altKey && e.key === 'ArrowRight') {
         e.preventDefault()
@@ -1049,7 +1125,7 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [fillerOccurrences, pauseSegments, activePlayTime, currentFillerIndex])
+  }, [activeFillerOccurrences, pauseSegments, activePlayTime, currentFillerIndex])
 
   const downloadCleanAudio = async () => {
     if (!result) return
@@ -2670,22 +2746,7 @@ ${advice.summary}
 
                   {/* 👥 Sprecher-Analyse & Trennung */}
                   {result && (() => {
-                    const spList = result.speakers && Object.keys(result.speakers).length > 0
-                      ? Object.values(result.speakers)
-                      : [
-                          {
-                            id: 'speaker_1',
-                            name: 'Sprecher 1',
-                            color: '#3b82f6',
-                            totalWords: result.totalWords || 0,
-                            fillerWords: result.fillerWords || 0,
-                            baseFillerWords: result.fillerWords || 0,
-                            relativeRate: result.relativeRate || 0,
-                            duration: result.duration || 0,
-                            wpm: result.duration > 0 ? Math.round(((result.totalWords || 0) / (result.duration / 60))) : 0,
-                            counts: result.counts || {},
-                          }
-                        ]
+                    const spList = speakerList
                     const totalFillers = Math.max(1, result.fillerWords)
 
                     return (
@@ -2718,6 +2779,10 @@ ${advice.summary}
                               .filter(([, c]) => c > 0)
                               .sort(([, a], [, b]) => b - a)
                               .slice(0, 3)
+
+                            const displayRate = (sp.relativeRate <= 1 && sp.relativeRate > 0)
+                              ? sp.relativeRate * 100
+                              : (sp.totalWords > 0 ? (sp.fillerWords / sp.totalWords) * 100 : sp.relativeRate || 0)
 
                             return (
                               <div key={sp.id} className="speaker-card" style={{ borderTopColor: sp.color }}>
@@ -2764,12 +2829,12 @@ ${advice.summary}
 
                                 <div className="speaker-metrics-row">
                                   <div className="speaker-metric">
-                                    <span className="sm-label">Füllwörter</span>
+                                    <span className="sm-label">Ähs & Laute</span>
                                     <strong className="sm-val">{sp.fillerWords}</strong>
                                   </div>
                                   <div className="speaker-metric">
-                                    <span className="sm-label">Quote</span>
-                                    <strong className="sm-val">{sp.relativeRate.toFixed(1)} %</strong>
+                                    <span className="sm-label">Ähm-Quote</span>
+                                    <strong className="sm-val">{displayRate.toFixed(1)} %</strong>
                                   </div>
                                   <div className="speaker-metric">
                                     <span className="sm-label">Tempo</span>
@@ -2779,12 +2844,53 @@ ${advice.summary}
 
                                 {topWords.length > 0 && (
                                   <div className="speaker-top-words">
-                                    <span className="stw-label">Top:</span>
+                                    <span className="stw-label">Laute direkt anhören:</span>
                                     {topWords.map(([w, c]) => (
-                                      <span key={w} className="speaker-word-chip">„{w}“ <b>{c}×</b></span>
+                                      <button
+                                        key={w}
+                                        type="button"
+                                        className="speaker-word-chip play-chip"
+                                        onClick={() => {
+                                          setSniperSpeakerFilter(sp.id)
+                                          setSniperWordFilter(w)
+                                          const first = fillerOccurrences.find(
+                                            (o) => (!o.speakerId || o.speakerId === sp.id) &&
+                                                   ((o.canonicalWord || o.word.toLowerCase()) === w.toLowerCase() || o.word.toLowerCase() === w.toLowerCase())
+                                          )
+                                          if (first) {
+                                            seekAndPlay(Math.max(0, first.start - 0.12))
+                                          }
+                                          document.querySelector('.sniper-card')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                                        }}
+                                        title={`Nur „${w}“ von ${sp.name} im Sniper abspielen`}
+                                      >
+                                        <span className="chip-play-icon">▶️</span> „{w}“ <b>{c}×</b>
+                                      </button>
                                     ))}
                                   </div>
                                 )}
+
+                                <div className="speaker-listen-action">
+                                  <button
+                                    type="button"
+                                    className="speaker-listen-all-btn"
+                                    onClick={() => {
+                                      setSniperSpeakerFilter(sp.id)
+                                      const hasAh = Boolean(sp.counts && (sp.counts['äh'] || 0) > 0)
+                                      setSniperWordFilter(hasAh ? 'äh' : 'all')
+                                      const first = fillerOccurrences.find(
+                                        (o) => (!o.speakerId || o.speakerId === sp.id) &&
+                                               (!hasAh || (o.canonicalWord || o.word.toLowerCase()) === 'äh' || o.word.toLowerCase() === 'äh')
+                                      ) || fillerOccurrences.find((o) => !o.speakerId || o.speakerId === sp.id)
+                                      if (first) {
+                                        seekAndPlay(Math.max(0, first.start - 0.12))
+                                      }
+                                      document.querySelector('.sniper-card')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                                    }}
+                                  >
+                                    🎧 <b>{sp.name}:</b> {sp.counts?.['äh'] ? `Alle ${sp.counts['äh']}× „äh“ anhören` : `Alle ${sp.fillerWords} Laute anhören`}
+                                  </button>
+                                </div>
                               </div>
                             )
                           })}
@@ -2822,7 +2928,7 @@ ${advice.summary}
                   <div className="waveform-bar-card sniper-card">
                     <div className="timeline-header-flex">
                       <div className="sniper-title-group">
-                        <span className="section-label">🎯 Füllwort- & Pausen-Sniper</span>
+                        <span className="section-label">🎯 Audio-Sniper: Ähs & Fülllaute gezielt anhören</span>
                       </div>
                       <div className="sniper-header-pills">
                         {currentMediaTitle && (
@@ -2832,9 +2938,110 @@ ${advice.summary}
                           </div>
                         )}
                         <span className="sniper-summary-tag">
-                          {fillerOccurrences.length} Füllwörter {pauseSegments.length > 0 ? `· ${pauseSegments.length} Pausen` : ''}
+                          {activeFillerOccurrences.length === fillerOccurrences.length
+                            ? `${fillerOccurrences.length} Ähs & Laute`
+                            : `${activeFillerOccurrences.length} von ${fillerOccurrences.length} Lauten`}
+                          {pauseSegments.length > 0 ? ` · ${pauseSegments.length} Pausen` : ''}
                         </span>
                       </div>
+                    </div>
+
+                    {/* Sniper Filter Bar: Word & Speaker filter */}
+                    <div className="sniper-filter-bar">
+                      <div className="sniper-filter-section">
+                        <span className="sniper-filter-heading">🔍 Laut:</span>
+                        <div className="sniper-filter-options">
+                          <button
+                            type="button"
+                            className={`sniper-filter-pill ${sniperWordFilter === 'all' ? 'active' : ''}`}
+                            onClick={() => setSniperWordFilter('all')}
+                          >
+                            Alle ({fillerOccurrences.filter(o => sniperSpeakerFilter === 'all' || !o.speakerId || o.speakerId === sniperSpeakerFilter).length})
+                          </button>
+                          {availableWordsForSniper.slice(0, 5).map(({ word, count }) => (
+                            <button
+                              key={word}
+                              type="button"
+                              className={`sniper-filter-pill ${sniperWordFilter.toLowerCase() === word.toLowerCase() ? 'active' : ''}`}
+                              onClick={() => {
+                                const nextWord = sniperWordFilter.toLowerCase() === word.toLowerCase() ? 'all' : word
+                                setSniperWordFilter(nextWord)
+                                if (nextWord !== 'all') {
+                                  const first = fillerOccurrences.find(
+                                    (o) => (sniperSpeakerFilter === 'all' || !o.speakerId || o.speakerId === sniperSpeakerFilter) &&
+                                           ((o.canonicalWord || o.word.toLowerCase()) === nextWord.toLowerCase() || o.word.toLowerCase() === nextWord.toLowerCase())
+                                  )
+                                  if (first) seekAndPlay(Math.max(0, first.start - 0.12))
+                                }
+                              }}
+                            >
+                              {word === 'äh' ? '🔴' : word === 'ähm' ? '🟠' : '💬'} „{word}“ <b>{count}</b>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {speakerList.length > 1 && (
+                        <div className="sniper-filter-section">
+                          <span className="sniper-filter-heading">👤 Sprecher:</span>
+                          <div className="sniper-filter-options">
+                            <button
+                              type="button"
+                              className={`sniper-filter-pill ${sniperSpeakerFilter === 'all' ? 'active' : ''}`}
+                              onClick={() => setSniperSpeakerFilter('all')}
+                            >
+                              Alle Sprecher
+                            </button>
+                            {speakerList.map((sp) => {
+                              const spCount = fillerOccurrences.filter((o) => {
+                                const matchesSp = !o.speakerId || o.speakerId === sp.id
+                                const matchesWord = sniperWordFilter === 'all' || (o.canonicalWord || o.word.toLowerCase()) === sniperWordFilter.toLowerCase()
+                                return matchesSp && matchesWord
+                              }).length
+                              return (
+                                <button
+                                  key={sp.id}
+                                  type="button"
+                                  className={`sniper-filter-pill speaker-pill-btn ${sniperSpeakerFilter === sp.id ? 'active' : ''}`}
+                                  style={{
+                                    borderColor: sniperSpeakerFilter === sp.id ? sp.color : undefined,
+                                    background: sniperSpeakerFilter === sp.id ? sp.color : undefined,
+                                    color: sniperSpeakerFilter === sp.id ? '#ffffff' : undefined,
+                                  }}
+                                  onClick={() => {
+                                    const nextSp = sniperSpeakerFilter === sp.id ? 'all' : sp.id
+                                    setSniperSpeakerFilter(nextSp)
+                                    if (nextSp !== 'all') {
+                                      const first = fillerOccurrences.find(
+                                        (o) => (!o.speakerId || o.speakerId === nextSp) &&
+                                               (sniperWordFilter === 'all' || (o.canonicalWord || o.word.toLowerCase()) === sniperWordFilter.toLowerCase())
+                                      )
+                                      if (first) seekAndPlay(Math.max(0, first.start - 0.12))
+                                    }
+                                  }}
+                                >
+                                  <span className="speaker-mini-dot" style={{ background: sniperSpeakerFilter === sp.id ? '#ffffff' : sp.color }} />
+                                  {sp.name} <b>{spCount}</b>
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {(sniperSpeakerFilter !== 'all' || sniperWordFilter !== 'all') && (
+                        <button
+                          type="button"
+                          className="sniper-reset-btn"
+                          onClick={() => {
+                            setSniperSpeakerFilter('all')
+                            setSniperWordFilter('all')
+                          }}
+                          title="Filter zurücksetzen"
+                        >
+                          ✕ Filter zurücksetzen
+                        </button>
+                      )}
                     </div>
 
                     <div
@@ -2868,12 +3075,17 @@ ${advice.summary}
                       {fillerOccurrences.map((occ) => {
                         const leftPercent = (occ.start / (result.duration || 1)) * 100
                         const widthPercent = Math.max(0.5, ((occ.end - occ.start) / (result.duration || 1)) * 100)
+                        const isMatch = activeFillerOccurrences.some((a) => a.id === occ.id)
                         return (
                           <div
                             key={occ.id}
-                            className="timeline-filler-marker"
+                            className={`timeline-filler-marker ${isMatch ? 'marker-active' : 'marker-dimmed'}`}
                             style={{ left: `${leftPercent}%`, width: `${widthPercent}%` }}
-                            title={`Füllwort „${occ.word}“ bei ${formatTimestamp(occ.start)}${occ.speakerName ? ` (${occ.speakerName})` : ''}`}
+                            title={`„${occ.word}“ bei ${formatTimestamp(occ.start)}${occ.speakerName ? ` (${occ.speakerName})` : ''}`}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              seekAndPlay(Math.max(0, occ.start - 0.12))
+                            }}
                           />
                         )
                       })}
@@ -2890,13 +3102,17 @@ ${advice.summary}
 
                     <div className="sniper-controls-grid">
                       <div className="sniper-row">
-                        <span className="sniper-row-label">🔴 Füllwörter:</span>
+                        <span className="sniper-row-label">
+                          {sniperWordFilter !== 'all'
+                            ? `🎙️ „${sniperWordFilter}“ (${activeFillerOccurrences.length}):`
+                            : '🎙️ Ähs & Laute:'}
+                        </span>
                         <div className="sniper-btn-group">
                           <button
                             type="button"
                             className="player-control-button"
                             onClick={() => jumpToFiller('prev')}
-                            disabled={!fillerOccurrences.length || currentFillerIndex <= 0}
+                            disabled={!activeFillerOccurrences.length || currentFillerIndex <= 0}
                             title="Tastenkürzel: Alt + Pfeil links"
                           >
                             ⏮️ Vorheriges
@@ -2906,20 +3122,21 @@ ${advice.summary}
                             className="sniper-counter-badge"
                             onClick={() => {
                               const idx = Math.max(0, currentFillerIndex)
-                              if (fillerOccurrences[idx]) {
-                                seekAndPlay(Math.max(0, fillerOccurrences[idx].start - 0.12))
+                              if (activeFillerOccurrences[idx]) {
+                                seekAndPlay(Math.max(0, activeFillerOccurrences[idx].start - 0.12))
                               }
                             }}
-                            disabled={!fillerOccurrences.length}
-                            title="Klicken, um dieses Füllwort jetzt anzuhören"
+                            disabled={!activeFillerOccurrences.length}
+                            title="Klicken, um diesen Laut jetzt anzuhören"
                           >
-                            ▶️ {fillerOccurrences[Math.max(0, currentFillerIndex)]?.word ? `„${fillerOccurrences[Math.max(0, currentFillerIndex)].word}“ ` : ''}{currentFillerIndex >= 0 ? currentFillerIndex + 1 : 1} / {fillerOccurrences.length}
+                            ▶️ {activeFillerOccurrences[Math.max(0, currentFillerIndex)]?.word ? `„${activeFillerOccurrences[Math.max(0, currentFillerIndex)].word}“ ` : ''}{currentFillerIndex >= 0 ? currentFillerIndex + 1 : 1} / {activeFillerOccurrences.length}
+                            {sniperSpeakerFilter !== 'all' && speakerList.length > 1 ? ` · ${speakerList.find(s => s.id === sniperSpeakerFilter)?.name || ''}` : ''}
                           </button>
                           <button
                             type="button"
                             className="player-control-button"
                             onClick={() => jumpToFiller('next')}
-                            disabled={!fillerOccurrences.length || (currentFillerIndex >= fillerOccurrences.length - 1 && currentFillerIndex !== -1)}
+                            disabled={!activeFillerOccurrences.length || (currentFillerIndex >= activeFillerOccurrences.length - 1 && currentFillerIndex !== -1)}
                             title="Tastenkürzel: Alt + Pfeil rechts"
                           >
                             Nächstes ⏭️
