@@ -2028,7 +2028,7 @@ ${advice.summary}
               navigateTo('ranking')
             }}
           >
-            🏆 Ähm-Ranking <span className="ranking-badge-pill">Top</span>
+            🏆 Ranking
           </a>
           <a
             href="/live"
