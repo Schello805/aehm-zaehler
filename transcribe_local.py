@@ -100,6 +100,7 @@ def main() -> None:
             if end_samp > start_samp:
                 pitch = estimate_segment_pitch(audio_samples[start_samp:end_samp], sr=16000)
 
+        cleaned_text = str(segment.text or '').strip()
         words_data = []
         if getattr(segment, 'words', None):
             for w in segment.words:
