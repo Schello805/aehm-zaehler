@@ -1,18 +1,17 @@
-const CACHE_NAME = 'aehm-zaehler-v1'
+const CACHE_NAME = 'aehm-zaehler-v2'
 const STATIC_ASSETS = [
-  '/',
-  '/index.html',
   '/manifest.json',
   '/logo.png',
   '/favicon.png',
-  '/favicon.svg'
+  '/favicon.svg',
+  '/icons.svg'
 ]
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       return cache.addAll(STATIC_ASSETS).catch((err) => {
-        console.warn('[SW] Cache addAll note:', err)
+        console.warn('[SW] Cache prefetch note:', err)
       })
     })
   )
@@ -33,26 +32,46 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url)
 
-  // Never cache API calls, SSE streams, or external analytics
+  // 1. Never intercept API calls, SSE streams, or non-GET requests
   if (url.pathname.startsWith('/api') || event.request.method !== 'GET') {
     return
   }
 
-  event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      const fetchPromise = fetch(event.request)
-        .then((networkResponse) => {
-          if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
-            const responseToCache = networkResponse.clone()
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(event.request, responseToCache)
-            })
-          }
-          return networkResponse
-        })
-        .catch(() => cachedResponse)
+  // 2. Navigation / HTML: ALWAYS Network-First to guarantee newest asset hashes
+  if (event.request.mode === 'navigate' || url.pathname === '/' || url.pathname.endsWith('.html')) {
+    event.respondWith(
+      fetch(event.request).catch(() => caches.match('/index.html') || caches.match('/'))
+    )
+    return
+  }
 
-      return cachedResponse || fetchPromise
+  // 3. Static Assets: Network-First with Cache fallback for scripts/styles
+  if (url.pathname.startsWith('/assets/')) {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          if (response && response.status === 200) {
+            const copy = response.clone()
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy))
+          }
+          return response
+        })
+        .catch(() => caches.match(event.request))
+    )
+    return
+  }
+
+  // 4. Other assets (images, fonts): Cache-First with Network Fallback
+  event.respondWith(
+    caches.match(event.request).then((cached) => {
+      return cached || fetch(event.request).then((response) => {
+        if (response && response.status === 200 && response.type === 'basic') {
+          const copy = response.clone()
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy))
+        }
+        return response
+      })
     })
   )
 })
+

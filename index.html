@@ -28,6 +28,24 @@
       })();
     </script>
     <!-- End Matomo Code -->
+    <script>
+      // Automatic recovery if browser held an outdated index.html referencing old bundle hashes
+      window.addEventListener('error', function(e) {
+        var msg = (e && e.message) ? e.message : '';
+        if (msg.indexOf('text/html') !== -1 || msg.indexOf('Loading chunk') !== -1 || msg.indexOf('dynamically imported module') !== -1) {
+          var key = 'aehm_chunk_reload_' + Date.now();
+          if (!sessionStorage.getItem('aehm_last_reload') || (Date.now() - Number(sessionStorage.getItem('aehm_last_reload')) > 10000)) {
+            sessionStorage.setItem('aehm_last_reload', String(Date.now()));
+            if ('serviceWorker' in navigator) {
+              navigator.serviceWorker.getRegistrations().then(function(regs) {
+                regs.forEach(function(r) { r.unregister(); });
+              });
+            }
+            window.location.reload();
+          }
+        }
+      });
+    </script>
   </head>
   <body>
     <div id="root"></div>

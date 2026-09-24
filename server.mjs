@@ -1387,9 +1387,25 @@ app.post('/verify-delete-password', handleVerifyDeletePassword)
 
 const distDirectory = join(projectRoot, 'dist')
 if (existsSync(distDirectory)) {
-  app.use(express.static(distDirectory))
+  // Static assets with cache headers
+  app.use('/assets', express.static(join(distDirectory, 'assets'), {
+    maxAge: '1y',
+    immutable: true,
+  }))
+  app.use(express.static(distDirectory, {
+    maxAge: '1h',
+  }))
+
+  // SPA fallback - NEVER return index.html for missing assets or api
   app.use((request, response, next) => {
     if (request.path.startsWith('/api')) return next()
+    if (request.path.startsWith('/assets/') || /\.(js|css|map|png|jpg|jpeg|gif|svg|ico|woff2?|ttf|eot)$/i.test(request.path)) {
+      return response.status(404).type('text/plain').send('Asset not found')
+    }
+    // Prevent caching index.html so clients always get latest asset hashes
+    response.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate')
+    response.setHeader('Pragma', 'no-cache')
+    response.setHeader('Expires', '0')
     response.sendFile(join(distDirectory, 'index.html'))
   })
 }
