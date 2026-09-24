@@ -389,7 +389,8 @@ export const RankingView: React.FC<RankingViewProps> = ({
   const confirmDelete = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!deleteModalItem) return
-    if (!deletePassword.trim()) {
+    const trimmedPassword = deletePassword.trim()
+    if (!trimmedPassword) {
       setDeleteError('Bitte Admin-Passwort eingeben.')
       return
     }
@@ -401,12 +402,18 @@ export const RankingView: React.FC<RankingViewProps> = ({
       const res = await fetch('/api/admin/verify-delete-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: deletePassword })
+        body: JSON.stringify({ password: trimmedPassword })
       })
-      const data = await res.json()
+      
+      let data: any = {}
+      try {
+        data = await res.json()
+      } catch {
+        data = {}
+      }
 
       if (!res.ok || !data.success) {
-        setDeleteError(data.error || 'Fehler beim Überprüfen des Passworts.')
+        setDeleteError(data.error || (res.status === 401 ? 'Falsches Passwort!' : res.status === 429 ? 'IP-Adresse nach zu vielen Fehlversuchen gesperrt.' : 'Fehler beim Überprüfen des Passworts.'))
         setDeleteLoading(false)
         return
       }
@@ -427,8 +434,9 @@ export const RankingView: React.FC<RankingViewProps> = ({
       setDeletePassword('')
       setDeleteError('')
       setTimeout(() => setDeleteSuccessMsg(''), 4500)
-    } catch {
-      setDeleteError('Verbindung zum Server fehlgeschlagen.')
+    } catch (err: any) {
+      console.error('Delete error:', err)
+      setDeleteError(err?.message || 'Verbindung zum Server fehlgeschlagen.')
     } finally {
       setDeleteLoading(false)
     }

@@ -1198,9 +1198,10 @@ app.post('/api/admin/verify-delete-password', (request, response) => {
   }
 
   const { password } = request.body || {}
-  const expectedPassword = process.env.ADMIN_DELETE_PASSWORD || 'Secure1!'
+  const rawPassword = String(password || '').trim()
+  const expectedPassword = String(process.env.ADMIN_DELETE_PASSWORD || 'Secure1!').trim()
 
-  if (!password || String(password) !== String(expectedPassword)) {
+  if (!rawPassword || rawPassword !== expectedPassword) {
     record.count += 1
     record.lastAttempt = now
 
