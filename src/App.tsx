@@ -1990,7 +1990,27 @@ ${advice.summary}
                 <div className="or-divider"><span>oder</span></div>
 
                 <div className="url-field-wrap">
-                  <label htmlFor="media-url">Link einfügen</label>
+                  <div className="url-label-row">
+                    <label htmlFor="media-url">Link einfügen</label>
+                    <div className="supported-platforms-pills">
+                      <span className="platform-pill youtube" title="YouTube Videos, Streams & Shorts">
+                        <svg className="platform-icon yt-icon" viewBox="0 0 24 24" aria-hidden="true">
+                          <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+                        </svg>
+                        <span>YouTube</span>
+                      </span>
+                      <span className="platform-pill spotify" title="Spotify Podcasts & Folgen">
+                        <svg className="platform-icon spotify-icon" viewBox="0 0 24 24" aria-hidden="true">
+                          <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.494 17.306c-.215.352-.676.463-1.028.247-2.816-1.722-6.36-2.111-10.534-1.157-.403.092-.808-.163-.9-.566-.092-.403.163-.808.566-.9 4.568-1.044 8.487-.597 11.649 1.348.352.216.463.676.247 1.028zm1.465-3.256c-.27.44-.847.578-1.287.308-3.224-1.982-8.14-2.557-11.954-1.398-.498.151-1.03-.134-1.181-.632-.151-.498.134-1.03.632-1.181 4.364-1.325 9.78-.684 13.482 1.593.44.27.578.847.308 1.287zm.126-3.41c-3.865-2.295-10.238-2.507-13.916-1.39-.594.18-1.222-.154-1.402-.748-.18-.594.154-1.222.748-1.402 4.23-1.284 11.272-1.037 15.733 1.611.534.317.708 1.011.391 1.545-.317.534-1.011.708-1.545.391z"/>
+                        </svg>
+                        <span>Spotify</span>
+                      </span>
+                      <span className="platform-pill podcast" title="Podcasts & Audio-URLs">
+                        <span className="podcast-emoji">🎙️</span>
+                        <span>Podcast RSS</span>
+                      </span>
+                    </div>
+                  </div>
                   <div className="url-field">
                     <span>↗</span>
                     <input
@@ -2000,7 +2020,7 @@ ${advice.summary}
                         setUrl(event.target.value)
                         setResult(null)
                       }}
-                      placeholder="YouTube-Link, Podcast-RSS oder MP3-URL..."
+                      placeholder="YouTube-Link, Spotify-Podcast oder MP3-URL..."
                     />
                   </div>
                   {isFetchingMediaInfo && (
@@ -2021,7 +2041,7 @@ ${advice.summary}
                       </div>
                     </div>
                   )}
-                  <small>YouTube, Podcast RSS-Feeds oder direkte Audio-/Videolinks werden unterstützt.</small>
+                  <small>YouTube-Videos, Spotify-Podcasts, RSS-Feeds oder MP3/MP4-Links werden unterstützt.</small>
                 </div>
               </div>
 
