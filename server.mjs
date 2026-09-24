@@ -3,7 +3,7 @@ import multer from 'multer'
 import { create as createYoutubeDl } from 'youtube-dl-exec'
 import { mkdtemp, readFile, readdir, rm, writeFile, stat } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
-import { tmpdir } from 'node:os'
+import { tmpdir, setPriority } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { existsSync, readFileSync, createWriteStream, createReadStream } from 'node:fs'
@@ -1150,7 +1150,23 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
         let stdoutBuffer = ''
         let stderrBuffer = ''
 
-        childProcess = spawn(pythonPath, [scriptPath, workingAudioPath, words.join(',')])
+        const whisperThreads = process.env.WHISPER_THREADS || '2'
+        const whisperModel = process.env.WHISPER_MODEL || 'small'
+        console.log(`[analyze] Running Whisper process (model=${whisperModel}, threads=${whisperThreads})`)
+        childProcess = spawn(pythonPath, [scriptPath, workingAudioPath, words.join(',')], {
+          env: {
+            ...process.env,
+            OMP_NUM_THREADS: String(whisperThreads),
+            CT2_NUM_THREADS: String(whisperThreads),
+            WHISPER_THREADS: String(whisperThreads),
+            WHISPER_MODEL: String(whisperModel),
+          },
+        })
+        try {
+          if (childProcess.pid && typeof setPriority === 'function') {
+            setPriority(childProcess.pid, 10)
+          }
+        } catch {}
         jobState.childProcess = childProcess
 
         childProcess.stdout.on('data', (chunk) => {

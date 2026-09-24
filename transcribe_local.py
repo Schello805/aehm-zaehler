@@ -1,3 +1,4 @@
+import gc
 import json
 import os
 import re
@@ -65,14 +66,23 @@ def main() -> None:
 
     audio_samples = None
     try:
-        # Only cache raw float32 samples in RAM for shorter files (< 15MB / ~35 min) to prevent OOM on multi-hour podcasts
-        if input_path.stat().st_size < 15 * 1024 * 1024:
+        # Only cache raw float32 samples in RAM for very short clips (< 5MB / ~10 min) to avoid OOM
+        if input_path.stat().st_size < 5 * 1024 * 1024:
             audio_samples = decode_audio(str(input_path), sampling_rate=16000)
     except Exception as e:
         sys.stderr.write(f'Audio decode warning: {e}\n')
 
-    threads = max(1, min(4, os.cpu_count() or 2))
-    model = WhisperModel('small', device='cpu', compute_type='int8', cpu_threads=threads)
+    # Configurable resource limits via environment variables
+    model_name = os.environ.get('WHISPER_MODEL', 'small').strip() or 'small'
+    try:
+        raw_threads = int(os.environ.get('WHISPER_THREADS', '2').strip())
+    except (ValueError, TypeError):
+        raw_threads = 2
+    # Limit default threads to 2 so system and Node.js never starve
+    threads = max(1, min(raw_threads, os.cpu_count() or 2))
+    sys.stderr.write(f'Whisper Inferenz-Konfiguration: Modell={model_name}, CPU-Kerne={threads}\n')
+
+    model = WhisperModel(model_name, device='cpu', compute_type='int8', cpu_threads=threads)
     segments, info = model.transcribe(
         str(input_path),
         language='de',
@@ -134,6 +144,9 @@ def main() -> None:
         segment_data.append(s_obj)
         sys.stdout.write(json.dumps({'type': 'segment', 'segment': s_obj}, ensure_ascii=False) + '\n')
         sys.stdout.flush()
+
+        if len(segment_data) % 40 == 0:
+            gc.collect()
 
     text = ' '.join(s.strip() for s in text_parts if s.strip())
     data = {
