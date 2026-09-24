@@ -6,7 +6,7 @@ import { execFile, spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { existsSync, readFileSync, createWriteStream } from 'node:fs'
+import { existsSync, readFileSync, createWriteStream, createReadStream } from 'node:fs'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
@@ -771,6 +771,47 @@ app.get('/api/analyze-status/:id', (request, response) => {
   return response.json(job)
 })
 
+app.get('/api/audio-stream/:id', async (request, response) => {
+  try {
+    const id = request.params.id
+    const job = activeJobs.get(id)
+    if (!job || !job.audioPath || !existsSync(job.audioPath)) {
+      return response.status(404).json({ error: 'Audiodatei nicht gefunden.' })
+    }
+
+    const filePath = job.audioPath
+    const stats = await stat(filePath)
+    const range = request.headers.range
+
+    if (range) {
+      const parts = range.replace(/bytes=/, '').split('-')
+      const start = parseInt(parts[0], 10)
+      const end = parts[1] ? parseInt(parts[1], 10) : stats.size - 1
+      const chunksize = end - start + 1
+      const fileStream = createReadStream(filePath, { start, end })
+      response.writeHead(206, {
+        'Content-Range': `bytes ${start}-${end}/${stats.size}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunksize,
+        'Content-Type': 'audio/mpeg',
+      })
+      fileStream.pipe(response)
+    } else {
+      response.writeHead(200, {
+        'Content-Length': stats.size,
+        'Content-Type': 'audio/mpeg',
+        'Accept-Ranges': 'bytes',
+      })
+      createReadStream(filePath).pipe(response)
+    }
+  } catch (err) {
+    console.error('[audio-stream] Error:', err?.message)
+    if (!response.headersSent) {
+      response.status(500).json({ error: 'Stream-Fehler' })
+    }
+  }
+})
+
 const killProcessTree = (child) => {
   if (!child) return
   try {
@@ -1046,6 +1087,7 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
       console.log('[analyze] Converting & optimizing audio for Whisper KI from:', sourceAudioFile)
       sendEvent({ type: 'status', stage: 'converting', message: 'Optimiere Audio für Whisper KI...' })
       await runCommand('ffmpeg', ['-y', '-i', sourceAudioFile, '-vn', '-ac', '1', '-ar', '16000', '-b:a', '48k', workingAudioPath], { timeout: 10 * 60 * 1000 })
+      jobState.audioPath = workingAudioPath
 
       const pythonPath = getPythonPath()
       const scriptPath = getTranscriptionScript()
@@ -1163,6 +1205,8 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
                   pauseCount,
                   totalPauseSeconds: Math.round(totalPauseSeconds * 10) / 10,
                   mediaTitle: mediaTitle || (file ? file.originalname : ''),
+                  directAudioUrl: metadataInfo?.directAudioUrl || '',
+                  audioUrl: metadataInfo?.directAudioUrl || `/api/audio-stream/${jobId}`,
                 }
 
                 // Cache completed result for fast repeat requests

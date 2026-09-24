@@ -85,6 +85,8 @@ export type Result = {
   mediaTitle?: string
   pauseCount?: number
   totalPauseSeconds?: number
+  audioUrl?: string
+  directAudioUrl?: string
 }
 
 const cleanHallucinatedRepetitions = (text: string): string => {
@@ -478,7 +480,12 @@ function App() {
   const currentJobIdRef = useRef<string | null>(null)
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'copied-comment' | 'copied-link'>('idle')
   const [installPrompt, setInstallPrompt] = useState<any>(null)
-  const playbackUrl = useMemo(() => (file ? URL.createObjectURL(file) : ''), [file])
+  const effectiveAudioUrl = useMemo(() => {
+    if (file) return URL.createObjectURL(file)
+    if (result?.audioUrl) return result.audioUrl
+    if (result?.directAudioUrl) return result.directAudioUrl
+    return ''
+  }, [file, result])
 
   const navigateTo = (targetView: 'analyse' | 'ranking' | 'live' | 'settings', pushHistory = true) => {
     setView(targetView)
@@ -1226,8 +1233,8 @@ ${advice.summary}
   }
 
   useEffect(() => () => {
-    if (playbackUrl) URL.revokeObjectURL(playbackUrl)
-  }, [playbackUrl])
+    if (effectiveAudioUrl && effectiveAudioUrl.startsWith('blob:')) URL.revokeObjectURL(effectiveAudioUrl)
+  }, [effectiveAudioUrl])
 
   useEffect(() => {
     localStorage.setItem('fill-words', JSON.stringify(words))
@@ -2902,14 +2909,21 @@ ${advice.summary}
                       )}
                     </div>
 
-                    {file && (
-                      <audio
-                        className="playback"
-                        ref={playbackRef}
-                        src={playbackUrl}
-                        controls
-                        onTimeUpdate={(e) => setActivePlayTime(e.currentTarget.currentTime)}
-                      />
+                    {!activeYoutubeId && effectiveAudioUrl && (
+                      <div className="audio-sync-player-card">
+                        <div className="audio-player-meta">
+                          <span className="audio-player-label">🔊 AUDIO-WIEDERGABE</span>
+                          <span className="video-sync-subhint">Klick auf Transkript oder Sniper springt sekundengenau</span>
+                        </div>
+                        <audio
+                          className="playback"
+                          ref={playbackRef}
+                          src={effectiveAudioUrl}
+                          controls
+                          preload="metadata"
+                          onTimeUpdate={(e) => setActivePlayTime(e.currentTarget.currentTime)}
+                        />
+                      </div>
                     )}
 
                     <div className="transcript-list">
