@@ -1967,7 +1967,7 @@ ${advice.summary}
         }
       }
     } catch (requestError) {
-      if (requestError instanceof DOMException && requestError.name === 'AbortError') {
+      if (requestError instanceof DOMException && requestError.name === 'AbortError' && controller.signal.aborted) {
         console.log('[Analyze] User aborted analysis.')
         if (pollerInterval) clearInterval(pollerInterval)
         try { fetch(`/api/analyze-cancel/${jobId}`, { method: 'POST' }).catch(() => {}) } catch {}
@@ -1980,18 +1980,9 @@ ${advice.summary}
       // If already marked completed by poller, ignore fetch closure errors
       if (isCompleted) return
 
-      console.warn('[Analyze] SSE stream error or closed, polling will continue:', requestError)
-      // Wait up to 3 seconds to see if poller gets final status
-      setTimeout(() => {
-        if (!isCompleted && pollerInterval) {
-          clearInterval(pollerInterval)
-          let errorMsg = requestError instanceof Error ? requestError.message : 'Analyse fehlgeschlagen.'
-          setError(errorMsg)
-          setProgress({ percent: 0, step: 0, label: 'Fehler', remainingSeconds: 0 })
-          setIsAnalyzing(false)
-          setQueueInfo(null)
-        }
-      }, 5000)
+      console.warn('[Analyze] SSE stream closed/timed out, background status polling will continue uninterrupted:', requestError)
+      // Note: Do NOT clear pollerInterval here! The background poller is actively tracking /api/analyze-status/:id
+      // and will complete the analysis as soon as Whisper finishes on the server.
     } finally {
       analysisControllerRef.current = null
     }
