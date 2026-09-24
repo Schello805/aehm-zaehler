@@ -186,6 +186,90 @@ const parsePodcastRss = (xmlText) => {
   }
 }
 
+const resolveSpotifyPodcast = async (url) => {
+  try {
+    const epMatch = url.match(/spotify\.com\/episode\/([a-zA-Z0-9]+)/i)
+    if (!epMatch) return null
+    const epId = epMatch[1]
+    console.log('[spotify] Resolving episode ID:', epId)
+
+    const res = await fetch(`https://open.spotify.com/episode/${epId}`, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      signal: AbortSignal.timeout(10000)
+    })
+    if (!res.ok) return null
+    const html = await res.text()
+
+    const ogTitle = html.match(/<meta\s+property="og:title"\s+content="([^"]+)"/i)?.[1] || ''
+    const ogDesc = html.match(/<meta\s+property="og:description"\s+content="([^"]+)"/i)?.[1] || ''
+    const durationSec = Number(html.match(/<meta\s+name="music:duration"\s+content="([^"]+)"/i)?.[1] || 0)
+    const thumbnail = html.match(/<meta\s+property="og:image"\s+content="([^"]+)"/i)?.[1] || ''
+
+    const showName = ogDesc.split('·')[0].trim() || 'Podcast'
+    const episodeTitle = ogTitle || 'Episode'
+
+    // 1. Search iTunes / Apple Podcast Directory for the open RSS feed
+    const searchUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(showName)}&entity=podcast&limit=5`
+    const itunesRes = await fetch(searchUrl, { signal: AbortSignal.timeout(8000) })
+    if (itunesRes.ok) {
+      const itunesData = await itunesRes.json()
+      const feedUrl = itunesData.results?.[0]?.feedUrl
+      if (feedUrl) {
+        console.log('[spotify] Found RSS Feed URL:', feedUrl)
+        const rssRes = await fetch(feedUrl, {
+          headers: { 'User-Agent': 'Mozilla/5.0' },
+          signal: AbortSignal.timeout(15000)
+        })
+        if (rssRes.ok) {
+          const xml = await rssRes.text()
+          const items = xml.match(/<item[\s\S]*?<\/item>/gi) || []
+
+          const epNumMatch = episodeTitle.match(/(?:#|Nr\.?|Ep\.?|Folge\s*)(\d+)/i)
+          const epNum = epNumMatch ? epNumMatch[1] : null
+          const cleanEpTitle = episodeTitle.replace(/#\d+/g, '').trim().toLowerCase()
+
+          for (const item of items) {
+            const itemTitleMatch = item.match(/<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?<\/title>/i)
+            const itemTitle = (itemTitleMatch ? itemTitleMatch[1] : '').trim()
+            const audioMatch = item.match(/<enclosure[^>]+url="([^"]+)"/i)
+            const audioUrl = audioMatch ? audioMatch[1] : ''
+
+            if (!audioUrl) continue
+
+            let isMatch = false
+            if (epNum && itemTitle.includes(epNum)) {
+              isMatch = true
+            } else if (cleanEpTitle.length > 4 && itemTitle.toLowerCase().includes(cleanEpTitle)) {
+              isMatch = true
+            }
+
+            if (isMatch) {
+              console.log('[spotify] Resolved direct audio MP3 URL from RSS:', audioUrl)
+              return {
+                title: `${showName} – ${itemTitle}`,
+                uploader: showName,
+                duration: durationSec,
+                thumbnail,
+                directAudioUrl: audioUrl
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return {
+      title: `${showName} – ${episodeTitle}`,
+      uploader: showName,
+      duration: durationSec,
+      thumbnail
+    }
+  } catch (err) {
+    console.warn('[spotify] Resolution error:', err?.message)
+    return null
+  }
+}
+
 const getUrlMetadata = async (url) => {
   if (!isValidHttpUrl(url)) {
     throw new Error('Ungültige oder nicht erlaubte URL.')
@@ -199,7 +283,15 @@ const getUrlMetadata = async (url) => {
 
   const lowerUrl = url.toLowerCase()
 
-  // 1. Direct Audio File (.mp3, .wav, .m4a, .aac, .ogg, .flac)
+  // 1. Spotify Podcast Episode Resolution
+  if (lowerUrl.includes('spotify.com')) {
+    const spotifyData = await resolveSpotifyPodcast(url)
+    if (spotifyData) {
+      return spotifyData
+    }
+  }
+
+  // 2. Direct Audio File (.mp3, .wav, .m4a, .aac, .ogg, .flac)
   if (/\.(mp3|wav|m4a|aac|ogg|flac)(\?.*)?$/i.test(lowerUrl)) {
     const filename = url.split('/').pop()?.split('?')[0] || 'Audiodatei'
     title = decodeURIComponent(filename)
@@ -208,7 +300,7 @@ const getUrlMetadata = async (url) => {
     return { title, uploader, duration: 0, thumbnail: '', directAudioUrl }
   }
 
-  // 2. Podcast RSS Feed (.xml, .rss, /feed, /podcast)
+  // 3. Podcast RSS Feed (.xml, .rss, /feed, /podcast)
   if (lowerUrl.includes('.rss') || lowerUrl.includes('.xml') || lowerUrl.includes('/feed') || lowerUrl.includes('podcast')) {
     try {
       const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(5000) })
@@ -232,7 +324,7 @@ const getUrlMetadata = async (url) => {
     }
   }
 
-  // 3. Fast oEmbed for YouTube
+  // 4. Fast oEmbed for YouTube
   if (/(?:youtu\.be\/|youtube\.com\/)/i.test(url)) {
     try {
       const oeRes = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`)
@@ -796,8 +888,12 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
           file = { buffer: Buffer.from(arrayBuffer), originalname: 'audio.mp3', mimetype: 'audio/mpeg' }
         } else {
           const output = join(temporaryDirectory, 'audio.%(ext)s')
+          const downloadTarget = (request.body.url.includes('spotify.com') && metadataInfo?.title)
+            ? `ytsearch1:${metadataInfo.title}`
+            : request.body.url
+
           try {
-            await youtubedl(request.body.url, {
+            await youtubedl(downloadTarget, {
               ...commonYtDlpOptions,
               extractAudio: true,
               audioFormat: 'mp3',
@@ -806,6 +902,9 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
           } catch (dlErr) {
             const msg = dlErr instanceof Error ? dlErr.message : String(dlErr)
             console.error('[analyze] yt-dlp Fehler:', msg)
+            if (request.body.url.includes('spotify.com')) {
+              throw new Error('Spotify-DRM: Diese Spotify-Folge konnte nicht über den offenen Podcast-Feed oder YouTube geladen werden. Bitte lade die MP3-Audiodatei direkt per Drag & Drop hoch.')
+            }
             throw new Error(`Download fehlgeschlagen: ${msg.split('\n')[0]}`)
           }
 
