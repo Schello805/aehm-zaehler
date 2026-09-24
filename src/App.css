@@ -17,13 +17,13 @@
 
 * { box-sizing: border-box; }
 html {
-  overflow-x: hidden;
+  overflow-x: clip;
   background: var(--bg);
 }
 body {
   margin: 0;
   max-width: 100%;
-  overflow-x: hidden;
+  overflow-x: clip;
   font-family: 'Plus Jakarta Sans', 'Outfit', system-ui, sans-serif;
   color: var(--ink);
   background: var(--bg);
@@ -39,6 +39,7 @@ main {
 }
 
 .topbar {
+  position: -webkit-sticky;
   position: sticky;
   top: 0;
   z-index: 1000;
