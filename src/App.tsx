@@ -3047,6 +3047,19 @@ ${advice.summary}
                           src={effectiveAudioUrl}
                           controls
                           preload="metadata"
+                          onError={(e) => {
+                            const currentSrc = e.currentTarget.currentSrc || e.currentTarget.src || ''
+                            if (currentSrc.includes('/api/proxy-audio?url=')) {
+                              try {
+                                const raw = decodeURIComponent(currentSrc.split('/api/proxy-audio?url=')[1])
+                                if (raw && e.currentTarget.src !== raw) {
+                                  console.warn('[Audio] Proxy 404, falling back to direct stream:', raw)
+                                  e.currentTarget.src = raw
+                                  e.currentTarget.load()
+                                }
+                              } catch {}
+                            }
+                          }}
                           onTimeUpdate={(e) => setActivePlayTime(e.currentTarget.currentTime)}
                         />
                       </div>
