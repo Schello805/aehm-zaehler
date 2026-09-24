@@ -812,6 +812,53 @@ app.get('/api/audio-stream/:id', async (request, response) => {
   }
 })
 
+app.get('/api/proxy-audio', async (request, response) => {
+  try {
+    const targetUrl = request.query.url
+    if (!targetUrl || !isValidHttpUrl(targetUrl)) {
+      return response.status(400).json({ error: 'Ungültige URL.' })
+    }
+
+    const range = request.headers.range
+    const fetchHeaders = {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)',
+    }
+    if (range) {
+      fetchHeaders['Range'] = range
+    }
+
+    const remoteRes = await fetch(targetUrl, {
+      headers: fetchHeaders,
+      redirect: 'follow',
+    })
+
+    if (!remoteRes.ok && remoteRes.status !== 206) {
+      return response.status(remoteRes.status).send('Audio proxy error')
+    }
+
+    const responseHeaders = {
+      'Content-Type': remoteRes.headers.get('content-type') || 'audio/mpeg',
+      'Accept-Ranges': 'bytes',
+      'Access-Control-Allow-Origin': '*',
+    }
+    if (remoteRes.headers.has('content-length')) {
+      responseHeaders['Content-Length'] = remoteRes.headers.get('content-length')
+    }
+    if (remoteRes.headers.has('content-range')) {
+      responseHeaders['Content-Range'] = remoteRes.headers.get('content-range')
+    }
+
+    response.writeHead(remoteRes.status, responseHeaders)
+    const nodeStream = Readable.fromWeb(remoteRes.body)
+    nodeStream.pipe(response)
+  } catch (err) {
+    console.error('[proxy-audio] Error:', err?.message)
+    if (!response.headersSent) {
+      response.status(500).send('Proxy error')
+    }
+  }
+})
+
 const killProcessTree = (child) => {
   if (!child) return
   try {

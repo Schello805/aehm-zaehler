@@ -522,10 +522,23 @@ function App() {
   const [installPrompt, setInstallPrompt] = useState<any>(null)
   const effectiveAudioUrl = useMemo(() => {
     if (file) return URL.createObjectURL(file)
-    if (result?.audioUrl) return result.audioUrl
-    if (result?.directAudioUrl) return result.directAudioUrl
+    // 1. Direct stream from media info (e.g. podcast MP3 resolved from Spotify/RSS)
+    const direct = fetchedMediaInfo?.directAudioUrl || result?.directAudioUrl
+    if (direct) {
+      if (direct.startsWith('http')) {
+        return `/api/proxy-audio?url=${encodeURIComponent(direct)}`
+      }
+      return direct
+    }
+    // 2. Saved audio stream from current session
+    if (result?.audioUrl) {
+      if (result.audioUrl.startsWith('http')) {
+        return `/api/proxy-audio?url=${encodeURIComponent(result.audioUrl)}`
+      }
+      return result.audioUrl
+    }
     return ''
-  }, [file, result])
+  }, [file, result, fetchedMediaInfo])
 
   const navigateTo = (targetView: 'analyse' | 'ranking' | 'live' | 'settings', pushHistory = true) => {
     if (view === 'live' && targetView !== 'live' && isLiveActiveRef.current) {
@@ -1447,6 +1460,28 @@ ${advice.summary}
             }))
             if (finalTitle) {
               setAnalysisTitle((prev) => prev ? prev : finalTitle)
+            }
+            if (directAudioUrl) {
+              setResult((prev) => prev ? {
+                ...prev,
+                directAudioUrl,
+                audioUrl: directAudioUrl,
+              } : prev)
+              if (activeHistoryId) {
+                setHistory((current) => current.map((h) => {
+                  if (h.id === activeHistoryId) {
+                    return {
+                      ...h,
+                      result: {
+                        ...h.result,
+                        directAudioUrl,
+                        audioUrl: directAudioUrl,
+                      }
+                    }
+                  }
+                  return h
+                }))
+              }
             }
           }
         }
