@@ -927,24 +927,38 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
           file = { buffer: Buffer.from(arrayBuffer), originalname: 'audio.mp3', mimetype: 'audio/mpeg' }
         } else {
           const output = join(temporaryDirectory, 'audio.%(ext)s')
-          const downloadTarget = (request.body.url.includes('spotify.com') && metadataInfo?.title)
-            ? `ytsearch1:${metadataInfo.title}`
-            : request.body.url
-
-          try {
-            await youtubedl(downloadTarget, {
-              ...commonYtDlpOptions,
-              extractAudio: true,
-              audioFormat: 'mp3',
-              output,
-            }, { timeout: 10 * 60 * 1000 })
-          } catch (dlErr) {
-            const msg = dlErr instanceof Error ? dlErr.message : String(dlErr)
-            console.error('[analyze] yt-dlp Fehler:', msg)
-            if (request.body.url.includes('spotify.com')) {
-              throw new Error('Spotify-DRM: Diese Spotify-Folge konnte nicht über den offenen Podcast-Feed oder YouTube geladen werden. Bitte lade die MP3-Audiodatei direkt per Drag & Drop hoch.')
+          
+          if (request.body.url.toLowerCase().includes('spotify.com') && !metadataInfo?.directAudioUrl) {
+            const searchTitle = metadataInfo?.title || 'Spotify Podcast'
+            if (!metadataInfo?.title) {
+              throw new Error('Spotify-DRM: Diese Spotify-Folge ist kopiergeschützt und konnte keinem offenen Podcast-Feed zugeordnet werden. Bitte lade die MP3-Datei direkt hoch oder nutze einen YouTube-Link.')
             }
-            throw new Error(`Download fehlgeschlagen: ${msg.split('\n')[0]}`)
+            console.log('[analyze] Spotify fallback to YouTube search:', searchTitle)
+            sendEvent({ type: 'status', stage: 'download', message: `Suche „${searchTitle}“ auf YouTube...` })
+            try {
+              await youtubedl(`ytsearch1:${searchTitle}`, {
+                ...commonYtDlpOptions,
+                extractAudio: true,
+                audioFormat: 'mp3',
+                output,
+              }, { timeout: 10 * 60 * 1000 })
+            } catch (ytSearchErr) {
+              console.error('[analyze] Spotify ytsearch failed:', ytSearchErr?.message)
+              throw new Error('Spotify-DRM: Die Spotify-Folge konnte nicht über offene Podcast-Quellen heruntergeladen werden. Bitte lade die Audiodatei direkt als MP3/M4A hoch.')
+            }
+          } else {
+            try {
+              await youtubedl(request.body.url, {
+                ...commonYtDlpOptions,
+                extractAudio: true,
+                audioFormat: 'mp3',
+                output,
+              }, { timeout: 10 * 60 * 1000 })
+            } catch (dlErr) {
+              const msg = dlErr instanceof Error ? dlErr.message : String(dlErr)
+              console.error('[analyze] yt-dlp Fehler:', msg)
+              throw new Error(`Download fehlgeschlagen: ${msg.split('\n')[0]}`)
+            }
           }
 
           const dirFiles = await readdir(temporaryDirectory)
