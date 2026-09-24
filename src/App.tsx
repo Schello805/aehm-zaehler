@@ -995,7 +995,13 @@ function App() {
         return
       }
 
-      if (e.altKey && e.key === 'ArrowRight') {
+      if (e.altKey && (e.key === ' ' || e.key === 'Enter')) {
+        e.preventDefault()
+        const idx = Math.max(0, currentFillerIndex)
+        if (fillerOccurrences[idx]) {
+          seekAndPlay(Math.max(0, fillerOccurrences[idx].start - 0.12))
+        }
+      } else if (e.altKey && e.key === 'ArrowRight') {
         e.preventDefault()
         jumpToFiller('next')
       } else if (e.altKey && e.key === 'ArrowLeft') {
@@ -1012,7 +1018,7 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [fillerOccurrences, pauseSegments, activePlayTime])
+  }, [fillerOccurrences, pauseSegments, activePlayTime, currentFillerIndex])
 
   const downloadCleanAudio = async () => {
     if (!result) return
@@ -2878,9 +2884,20 @@ ${advice.summary}
                           >
                             ⏮️ Vorheriges
                           </button>
-                          <span className="sniper-counter-badge">
-                            {currentFillerIndex >= 0 ? currentFillerIndex + 1 : 0} / {fillerOccurrences.length}
-                          </span>
+                          <button
+                            type="button"
+                            className="sniper-counter-badge"
+                            onClick={() => {
+                              const idx = Math.max(0, currentFillerIndex)
+                              if (fillerOccurrences[idx]) {
+                                seekAndPlay(Math.max(0, fillerOccurrences[idx].start - 0.12))
+                              }
+                            }}
+                            disabled={!fillerOccurrences.length}
+                            title="Klicken, um dieses Füllwort jetzt anzuhören"
+                          >
+                            ▶️ {fillerOccurrences[Math.max(0, currentFillerIndex)]?.word ? `„${fillerOccurrences[Math.max(0, currentFillerIndex)].word}“ ` : ''}{currentFillerIndex >= 0 ? currentFillerIndex + 1 : 1} / {fillerOccurrences.length}
+                          </button>
                           <button
                             type="button"
                             className="player-control-button"
@@ -2906,9 +2923,20 @@ ${advice.summary}
                             >
                               ⏮️ Vorherige
                             </button>
-                            <span className="sniper-counter-badge pause">
-                              {currentPauseIndex >= 0 ? currentPauseIndex + 1 : 0} / {pauseSegments.length}
-                            </span>
+                            <button
+                              type="button"
+                              className="sniper-counter-badge pause"
+                              onClick={() => {
+                                const idx = Math.max(0, currentPauseIndex)
+                                if (pauseSegments[idx]) {
+                                  seekAndPlay(Math.max(0, pauseSegments[idx].start))
+                                }
+                              }}
+                              disabled={!pauseSegments.length}
+                              title="Klicken, um diese Pause anzuhören"
+                            >
+                              ▶️ {currentPauseIndex >= 0 ? currentPauseIndex + 1 : 1} / {pauseSegments.length}
+                            </button>
                             <button
                               type="button"
                               className="player-control-button pause-btn"
@@ -2924,7 +2952,7 @@ ${advice.summary}
 
                       <div className="sniper-row-actions">
                         <div className="keyboard-shortcut-hint" title="Navigiere blitzschnell mit der Tastatur">
-                          ⌨️ <kbd>Alt</kbd> + <kbd>←</kbd>/<kbd>→</kbd> Füllwörter · <kbd>Alt</kbd> + <kbd>↑</kbd>/<kbd>↓</kbd> Pausen
+                          ⌨️ <kbd>Alt</kbd> + <kbd>←</kbd>/<kbd>→</kbd> Füllwörter · <kbd>Alt</kbd> + <kbd>↑</kbd>/<kbd>↓</kbd> Pausen · Klick auf ▶️ zum Anhören
                         </div>
                       </div>
                     </div>
