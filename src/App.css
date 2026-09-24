@@ -6342,6 +6342,121 @@ body { transition: background 0.35s ease, color 0.35s ease; }
   }
 }
 
+.live-audio-download-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.live-audio-download-btn.mp3-primary {
+  background: linear-gradient(135deg, #f37d21, #e0650d);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(243, 125, 33, 0.35);
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.live-audio-download-btn.mp3-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(243, 125, 33, 0.45);
+}
+
+.live-audio-download-btn.mp3-primary:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.live-audio-download-btn.webm-secondary {
+  background: var(--bg-surface-secondary, rgba(0, 0, 0, 0.05));
+  color: var(--text-secondary, #666);
+  border: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.1));
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: all 0.2s ease;
+}
+
+.live-audio-download-btn.webm-secondary:hover {
+  background: rgba(0, 0, 0, 0.1);
+  color: var(--text-primary, #111);
+}
+
+.live-transcript-btn-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.live-whisper-enhance-btn {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  color: #fff;
+  border: 0;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+  transition: all 0.2s ease;
+}
+
+.live-whisper-enhance-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+}
+
+.live-whisper-enhance-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.live-transcribing-state {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 24px;
+  background: rgba(59, 130, 246, 0.06);
+  border: 1px dashed rgba(59, 130, 246, 0.3);
+  border-radius: 12px;
+  margin-top: 10px;
+}
+
+.live-transcribing-state p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary, #111);
+}
+
+.live-spinner-ring {
+  width: 28px;
+  height: 28px;
+  border: 3px solid rgba(59, 130, 246, 0.2);
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: liveSpin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes liveSpin {
+  to { transform: rotate(360deg); }
+}
+
+
 
 
 

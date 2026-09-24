@@ -3642,6 +3642,9 @@ function LiveStudio({
   const [liveReportResult, setLiveReportResult] = useState<Result | null>(null)
   const [showReportModal, setShowReportModal] = useState(false)
   const [copiedReport, setCopiedReport] = useState(false)
+  const [isAiTranscribing, setIsAiTranscribing] = useState(false)
+  const [isConvertingMp3, setIsConvertingMp3] = useState(false)
+  const isStoppingRef = useRef(false)
 
   // Notify parent whether live session is active & warn on tab close / reload
   const isSessionOngoing = isListening || (elapsedSeconds > 0 && !showReportModal)
@@ -4018,152 +4021,159 @@ function LiveStudio({
         audioRecorderRef.current.resume()
       }
 
-      let currentSessionFinalText = ""
+      isStoppingRef.current = false
 
-      const recognition = new SpeechRecognition()
-      recognition.continuous = true
-      recognition.interimResults = true
-      recognition.lang = "de-DE"
-      recognition.maxAlternatives = 3
+      const spawnRecognition = () => {
+        if (!isListeningRef.current || isStoppingRef.current) return
 
-      recognition.onresult = (event: any) => {
-        let sessFinal = ""
-        let sessInterim = ""
-        const sessId = sessionCountRef.current
+        const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+        if (!SpeechRec) return
 
-        for (let i = 0; i < event.results.length; i++) {
-          const res = event.results[i]
-          const isFinal = res.isFinal
-          const primaryTranscript = res[0]?.transcript || ""
-
-          if (isFinal) {
-            sessFinal += (sessFinal ? " " : "") + primaryTranscript.trim()
-          } else {
-            sessInterim += (sessInterim ? " " : "") + primaryTranscript.trim()
-          }
-
-          // All alternatives of this segment
-          const allAlts: string[] = []
-          for (let alt = 0; alt < res.length; alt++) {
-            const altText = res[alt]?.transcript
-            if (altText) allAlts.push(altText)
-          }
-          if (allAlts.length === 0 && primaryTranscript) {
-            allAlts.push(primaryTranscript)
-          }
-
-          // Lock in maximum occurrence for each search word in this segment
-          const segKey = `${sessId}_${i}`
-          const segExisting = segmentFillersRef.current.get(segKey) || {}
-          const segUpdated: Record<string, number> = { ...segExisting }
-
-          for (const w of words) {
-            const bestForThisAltScan = Math.max(
-              0,
-              ...allAlts.map((text) => {
-                const toks = text.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []
-                return countTargetInTokens(toks, w)
-              })
-            )
-            segUpdated[w] = Math.max(segExisting[w] || 0, bestForThisAltScan)
-          }
-
-          segmentFillersRef.current.set(segKey, segUpdated)
-          console.log("[LiveStudio] onresult:", {
-            isFinal,
-            allAlts,
-            segUpdated
-          })
+        let rec: any = null
+        try {
+          rec = new SpeechRec()
+        } catch (err) {
+          console.warn("[LiveStudio] Could not construct SpeechRecognition:", err)
+          return
         }
 
-        currentSessionFinalText = sessFinal
+        const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent)
+        rec.continuous = !isSafari
+        rec.interimResults = true
+        rec.lang = "de-DE"
+        rec.maxAlternatives = 3
 
-        // Combined transcript across all sessions & current interim
-        const fullTranscript = (
-          (accumulatedFinalTextRef.current ? accumulatedFinalTextRef.current + " " : "") +
-          sessFinal +
-          (sessInterim ? " " + sessInterim : "")
-        ).trim()
+        let currentSegmentFinal = ""
 
-        const fullTokens = fullTranscript.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []
+        rec.onresult = (event: any) => {
+          let sessFinal = ""
+          let sessInterim = ""
+          const sessId = sessionCountRef.current
 
-        // Combine total counts: ensure both full transcript scanning and segment alternatives are captured
-        const totalCounts: Record<string, number> = {}
-        for (const w of words) {
-          const directCount = countTargetInTokens(fullTokens, w)
-          let segSum = 0
-          segmentFillersRef.current.forEach((segCounts) => {
-            segSum += (segCounts[w] || 0)
-          })
-          totalCounts[w] = Math.max(directCount, segSum)
-        }
+          for (let i = 0; i < event.results.length; i++) {
+            const res = event.results[i]
+            const isFinal = res.isFinal
+            const primaryTranscript = res[0]?.transcript || ""
 
-        const totalFiller = Object.values(totalCounts).reduce((a, b) => a + b, 0)
+            if (isFinal) {
+              sessFinal += (sessFinal ? " " : "") + primaryTranscript.trim()
+            } else {
+              sessInterim += (sessInterim ? " " : "") + primaryTranscript.trim()
+            }
 
-        setLiveTranscript(fullTranscript)
-        setWordCounts(totalCounts)
+            const allAlts: string[] = []
+            for (let alt = 0; alt < res.length; alt++) {
+              const altText = res[alt]?.transcript
+              if (altText) allAlts.push(altText)
+            }
+            if (allAlts.length === 0 && primaryTranscript) allAlts.push(primaryTranscript)
 
-        // Trigger animations & alerts when count increases
-        setLiveCount((prev) => {
-          if (totalFiller > prev) {
-            popCounterAnimation()
-            spawnParticles()
+            const segKey = `${sessId}_${i}`
+            const segExisting = segmentFillersRef.current.get(segKey) || {}
+            const segUpdated: Record<string, number> = { ...segExisting }
+
+            for (const w of words) {
+              const bestForThisAltScan = Math.max(
+                0,
+                ...allAlts.map((text) => {
+                  const toks = text.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []
+                  return countTargetInTokens(toks, w)
+                })
+              )
+              segUpdated[w] = Math.max(segExisting[w] || 0, bestForThisAltScan)
+            }
+            segmentFillersRef.current.set(segKey, segUpdated)
           }
-          return totalFiller
-        })
 
-        // WPM calculation
-        const secs = elapsedSecondsRef.current
-        if (fullTokens.length > 0 && secs > 0) {
-          const wpm = Math.round((fullTokens.length / secs) * 60)
-          setSpeechPace(wpm)
-          setWpmHistory((prev) => {
-            const next = [...prev, wpm]
-            return next.length > 60 ? next.slice(-60) : next
-          })
-        }
+          currentSegmentFinal = sessFinal
 
-        const lastWordMatched = words.find((w) => (totalCounts[w] || 0) > (wordCounts[w] || 0))
-        if (lastWordMatched) {
-          setLastAlert(`Füllwort erkannt: „${lastWordMatched}"! Kurz innehalten & Stimme absenken.`)
-        }
-      }
-
-      recognition.onstart = () => {
-        console.log("[LiveStudio] recognition.onstart — running")
-      }
-
-      recognition.onerror = (err: any) => {
-        console.error("[LiveStudio] recognition.onerror:", err.error, err.message)
-        if (err.error === "not-allowed") {
-          setLastAlert("Mikrofon-Zugriff verweigert. Bitte erlaube den Zugriff in den Browser-Einstellungen.")
-        } else if (err.error === "network") {
-          setLastAlert("Netzwerkfehler: Spracherkennung benötigt eine Internetverbindung.")
-        } else if (err.error !== "no-speech" && err.error !== "aborted") {
-          setLastAlert(`Erkennungsfehler: ${err.error}`)
-        }
-      }
-
-      recognition.onend = () => {
-        console.log("[LiveStudio] recognition.onend — restarting:", isListeningRef.current)
-        if (currentSessionFinalText) {
-          accumulatedFinalTextRef.current = (
+          const fullTranscript = (
             (accumulatedFinalTextRef.current ? accumulatedFinalTextRef.current + " " : "") +
-            currentSessionFinalText
+            sessFinal +
+            (sessInterim ? " " + sessInterim : "")
           ).trim()
+
+          const fullTokens = fullTranscript.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []
+          const totalCounts: Record<string, number> = {}
+          for (const w of words) {
+            const directCount = countTargetInTokens(fullTokens, w)
+            let segSum = 0
+            segmentFillersRef.current.forEach((segCounts) => {
+              segSum += (segCounts[w] || 0)
+            })
+            totalCounts[w] = Math.max(directCount, segSum)
+          }
+
+          const totalFiller = Object.values(totalCounts).reduce((a, b) => a + b, 0)
+          setLiveTranscript(fullTranscript)
+          setWordCounts(totalCounts)
+
+          setLiveCount((prev) => {
+            if (totalFiller > prev) {
+              popCounterAnimation()
+              spawnParticles()
+            }
+            return totalFiller
+          })
+
+          const secs = elapsedSecondsRef.current
+          if (fullTokens.length > 0 && secs > 0) {
+            const wpm = Math.round((fullTokens.length / secs) * 60)
+            setSpeechPace(wpm)
+            setWpmHistory((prev) => {
+              const next = [...prev, wpm]
+              return next.length > 60 ? next.slice(-60) : next
+            })
+          }
+
+          const lastWordMatched = words.find((w) => (totalCounts[w] || 0) > (wordCounts[w] || 0))
+          if (lastWordMatched) {
+            setLastAlert(`Füllwort erkannt: „${lastWordMatched}"! Kurz innehalten & Stimme absenken.`)
+          }
         }
-        sessionCountRef.current += 1
-        if (isListeningRef.current) {
-          try {
-            recognition.start()
-          } catch (restartErr) {
-            console.warn("[LiveStudio] Restart failed:", restartErr)
+
+        rec.onerror = (err: any) => {
+          console.warn("[LiveStudio] rec.onerror:", err.error, err.message)
+          if (err.error === "not-allowed") {
+            setLastAlert("Mikrofon-Zugriff verweigert. Bitte in den Browser-Einstellungen erlauben.")
+          } else if (err.error === "network") {
+            setLastAlert("Hinweis: Browser-Spracherkennung benötigt eine aktive Internetverbindung.")
+          }
+        }
+
+        rec.onend = () => {
+          if (currentSegmentFinal) {
+            accumulatedFinalTextRef.current = (
+              (accumulatedFinalTextRef.current ? accumulatedFinalTextRef.current + " " : "") +
+              currentSegmentFinal
+            ).trim()
+            currentSegmentFinal = ""
+          }
+          sessionCountRef.current += 1
+
+          if (isListeningRef.current && !isStoppingRef.current) {
+            setTimeout(() => {
+              if (isListeningRef.current && !isStoppingRef.current) {
+                spawnRecognition()
+              }
+            }, 100)
+          }
+        }
+
+        try {
+          rec.start()
+          recognitionRef.current = rec
+        } catch (e) {
+          console.warn("[LiveStudio] rec.start() error:", e)
+          if (isListeningRef.current && !isStoppingRef.current) {
+            setTimeout(() => {
+              if (isListeningRef.current && !isStoppingRef.current) spawnRecognition()
+            }, 250)
           }
         }
       }
 
-      recognition.start()
-      recognitionRef.current = recognition
+      spawnRecognition()
       isListeningRef.current = true
       setIsListening(true)
       setLastAlert("Live-Erkennung & Aufnahme aktiv. Sprich frei ins Mikrofon!")
@@ -4179,9 +4189,10 @@ function LiveStudio({
   }
 
   const stopListening = () => {
+    isStoppingRef.current = true
     isListeningRef.current = false
     if (recognitionRef.current) {
-      recognitionRef.current.stop()
+      try { recognitionRef.current.stop() } catch {}
       recognitionRef.current = null
     }
     if (audioRecorderRef.current && audioRecorderRef.current.state === "recording") {
@@ -4195,11 +4206,114 @@ function LiveStudio({
     setIsListening(false)
   }
 
+  const transcribeWithWhisper = async (overrideBlob?: Blob) => {
+    let blob = overrideBlob || recordedAudioBlob
+    if (!blob && audioChunksRef.current.length > 0) {
+      const mime = audioChunksRef.current[0]?.type || "audio/webm"
+      blob = new Blob(audioChunksRef.current, { type: mime })
+    }
+    if (!blob) {
+      alert("Keine Audioaufnahme für die Whisper KI verfügbar.")
+      return
+    }
+
+    setIsAiTranscribing(true)
+    try {
+      const formData = new FormData()
+      formData.append("file", blob, "live-recording.webm")
+      formData.append("words", JSON.stringify(words))
+
+      const res = await fetch("/api/transcribe-live", {
+        method: "POST",
+        body: formData
+      })
+      if (!res.ok) {
+        let errText = `Serverfehler (${res.status})`
+        try {
+          const json = await res.json()
+          if (json.error) errText = json.error
+        } catch {}
+        throw new Error(errText)
+      }
+      const data: Result = await res.json()
+      setLiveReportResult(data)
+      setLiveTranscript(data.text || "")
+      setWordCounts(data.counts || {})
+      setLiveCount(data.fillerWords || 0)
+      if (data.duration > 0 && data.totalWords > 0) {
+        setSpeechPace(Math.round((data.totalWords / data.duration) * 60))
+      }
+
+      if (onSaveToHistory) {
+        const historyEntry: HistoryEntry = {
+          id: "live-" + Date.now(),
+          source: "live-mic",
+          sourceLabel: `Live Studio KI (${new Date().toLocaleDateString("de-DE")} ${new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })})`,
+          createdAt: new Date().toISOString(),
+          result: data,
+          words: [...words],
+          title: `Live Studio Training (${new Date().toLocaleDateString("de-DE")})`,
+          note: `Live-Aufnahme mit ${data.fillerWords} Füllwörtern bei ${data.totalWords > 0 ? Math.round((data.totalWords / data.duration) * 60) : 0} WPM (Whisper KI)`,
+          tags: ["Live Studio", "Whisper KI"]
+        }
+        onSaveToHistory(historyEntry)
+      }
+    } catch (err: any) {
+      console.error("[LiveStudio] transcribeWithWhisper error:", err)
+      alert("Whisper-Transkription fehlgeschlagen: " + (err.message || String(err)))
+    } finally {
+      setIsAiTranscribing(false)
+    }
+  }
+
+  const handleDownloadMp3 = async () => {
+    let blob = recordedAudioBlob
+    if (!blob && audioChunksRef.current.length > 0) {
+      const mime = audioChunksRef.current[0]?.type || "audio/webm"
+      blob = new Blob(audioChunksRef.current, { type: mime })
+    }
+    if (!blob) {
+      alert("Keine Audio-Aufnahme zum Herunterladen vorhanden.")
+      return
+    }
+
+    setIsConvertingMp3(true)
+    try {
+      const formData = new FormData()
+      formData.append("file", blob, "live-recording.webm")
+      const res = await fetch("/api/convert-to-mp3", {
+        method: "POST",
+        body: formData
+      })
+      if (!res.ok) {
+        let errText = `Serverfehler (${res.status})`
+        try {
+          const json = await res.json()
+          if (json.error) errText = json.error
+        } catch {}
+        throw new Error(errText)
+      }
+      const mp3Blob = await res.blob()
+      const url = URL.createObjectURL(mp3Blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `live-session-${new Date().toISOString().slice(0, 10)}.mp3`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (err: any) {
+      console.error("[LiveStudio] MP3 conversion error:", err)
+      alert("MP3-Download fehlgeschlagen: " + (err.message || String(err)))
+    } finally {
+      setIsConvertingMp3(false)
+    }
+  }
+
   const finishSessionAndShowReport = () => {
     // 1. Stop SpeechRecognition & Recorder
+    isStoppingRef.current = true
     isListeningRef.current = false
     if (recognitionRef.current) {
-      recognitionRef.current.stop()
+      try { recognitionRef.current.stop() } catch {}
       recognitionRef.current = null
     }
     if (audioRecorderRef.current && audioRecorderRef.current.state !== "inactive") {
@@ -4216,7 +4330,17 @@ function LiveStudio({
     stopVisualizer()
     setIsListening(false)
 
-    // 2. Aggregate final stats
+    // Build latest recorded audio blob immediately
+    let currentBlob = recordedAudioBlob
+    if (!currentBlob && audioChunksRef.current.length > 0) {
+      const mime = audioChunksRef.current[0]?.type || "audio/webm"
+      currentBlob = new Blob(audioChunksRef.current, { type: mime })
+      setRecordedAudioBlob(currentBlob)
+      const url = URL.createObjectURL(currentBlob)
+      setRecordedAudioUrl(url)
+    }
+
+    // 2. Aggregate final stats from live transcript
     const fullText = (
       (accumulatedFinalTextRef.current ? accumulatedFinalTextRef.current + " " : "") +
       (liveTranscript || "")
@@ -4280,10 +4404,17 @@ function LiveStudio({
       }
       onSaveToHistory(historyEntry)
     }
+
+    // Auto-transcribe with Whisper if speech recognition gave 0 words but audio exists!
+    if (totalWords === 0 && currentBlob) {
+      void transcribeWithWhisper(currentBlob)
+    }
   }
 
   const resetLiveSession = () => {
     stopListening()
+    setIsAiTranscribing(false)
+    setIsConvertingMp3(false)
     if (audioRecorderRef.current && audioRecorderRef.current.state !== "inactive") {
       try {
         audioRecorderRef.current.stop()
@@ -4598,13 +4729,25 @@ function LiveStudio({
               <div className="live-audio-player-box">
                 <div className="live-audio-player-title">
                   <span>🎙️ Deine Audio-Aufnahme</span>
-                  <a
-                    href={recordedAudioUrl}
-                    download={`live-training-${new Date().toISOString().slice(0, 10)}.webm`}
-                    className="live-audio-download-btn"
-                  >
-                    💾 Audio herunterladen (.webm)
-                  </a>
+                  <div className="live-audio-download-group">
+                    <button
+                      type="button"
+                      className="live-audio-download-btn mp3-primary"
+                      onClick={handleDownloadMp3}
+                      disabled={isConvertingMp3}
+                      title="Audio als echte MP3-Datei herunterladen"
+                    >
+                      {isConvertingMp3 ? "⏳ Konvertiere zu MP3..." : "💾 Audio herunterladen (.mp3)"}
+                    </button>
+                    <a
+                      href={recordedAudioUrl}
+                      download={`live-training-${new Date().toISOString().slice(0, 10)}.webm`}
+                      className="live-audio-download-btn webm-secondary"
+                      title="Originale WebM-Rohaufnahme herunterladen"
+                    >
+                      .webm
+                    </a>
+                  </div>
                 </div>
                 <audio controls src={recordedAudioUrl} className="live-native-audio-player" />
               </div>
@@ -4626,17 +4769,35 @@ function LiveStudio({
               </div>
             </div>
 
-            {/* Transcript with Highlights */}
+            {/* Transcript with Highlights & Whisper Enhance Button */}
             <div className="live-report-transcript-box">
               <div className="live-section-title">
                 <span>VOLLSTÄNDIGES TRANSKRIPT</span>
-                <button type="button" className="live-txt-download-btn" onClick={handleDownloadTxt}>
-                  💾 als .txt speichern
-                </button>
+                <div className="live-transcript-btn-group">
+                  <button
+                    type="button"
+                    className="live-whisper-enhance-btn"
+                    onClick={() => transcribeWithWhisper()}
+                    disabled={isAiTranscribing}
+                    title="Präzise mit Whisper KI transkribieren"
+                  >
+                    {isAiTranscribing ? "🔄 Whisper KI analysiert..." : "✨ Mit Whisper KI nachschärfen"}
+                  </button>
+                  <button type="button" className="live-txt-download-btn" onClick={handleDownloadTxt}>
+                    💾 als .txt speichern
+                  </button>
+                </div>
               </div>
-              <div className="live-report-transcript-content">
-                {renderHighlightedTranscript(liveReportResult.text)}
-              </div>
+              {isAiTranscribing ? (
+                <div className="live-transcribing-state">
+                  <div className="live-spinner-ring" />
+                  <p><b>Whisper KI transkribiert deine Aufnahme...</b><br />Füllwörter und gesprochene Wörter werden sekundengenau ermittelt.</p>
+                </div>
+              ) : (
+                <div className="live-report-transcript-content">
+                  {renderHighlightedTranscript(liveReportResult.text)}
+                </div>
+              )}
             </div>
 
             {/* Actions Bar */}

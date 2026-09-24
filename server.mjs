@@ -1399,6 +1399,129 @@ app.post('/api/clean-audio', upload.single('file'), async (request, response) =>
   }
 })
 
+app.post('/api/convert-to-mp3', upload.single('file'), async (request, response) => {
+  let temporaryDirectory
+  try {
+    if (!request.file) {
+      return response.status(400).json({ error: 'Keine Audiodatei übermittelt.' })
+    }
+    temporaryDirectory = await mkdtemp(join(tmpdir(), 'aehmconv-'))
+    const inputExt = request.file.mimetype?.includes('mp4') ? '.mp4' : '.webm'
+    const inputPath = join(temporaryDirectory, `input${inputExt}`)
+    const outputPath = join(temporaryDirectory, 'output.mp3')
+
+    await writeFile(inputPath, request.file.buffer)
+    await runCommand('ffmpeg', ['-y', '-i', inputPath, '-vn', '-acodec', 'libmp3lame', '-b:a', '192k', outputPath], { timeout: 60 * 1000 })
+
+    const mp3Buffer = await readFile(outputPath)
+    response.setHeader('Content-Type', 'audio/mpeg')
+    response.setHeader('Content-Disposition', 'attachment; filename="live-session.mp3"')
+    return response.send(mp3Buffer)
+  } catch (err) {
+    console.error('[convert-to-mp3] Error:', err)
+    return response.status(500).json({ error: 'MP3-Konvertierung fehlgeschlagen: ' + (err.message || String(err)) })
+  } finally {
+    if (temporaryDirectory) {
+      try { await rm(temporaryDirectory, { recursive: true, force: true }) } catch {}
+    }
+  }
+})
+
+app.post('/api/transcribe-live', upload.single('file'), async (request, response) => {
+  let temporaryDirectory
+  try {
+    if (!request.file) {
+      return response.status(400).json({ error: 'Keine Audiodatei übermittelt.' })
+    }
+    const rawWords = JSON.parse(request.body.words || '[]').map((w) => String(w).trim().toLowerCase()).filter(Boolean)
+    const words = rawWords.length > 0 ? rawWords : ['äh', 'ähm']
+
+    temporaryDirectory = await mkdtemp(join(tmpdir(), 'aehmlive-'))
+    const inputExt = request.file.mimetype?.includes('mp4') ? '.mp4' : '.webm'
+    const inputPath = join(temporaryDirectory, `input${inputExt}`)
+    const workingAudioPath = join(temporaryDirectory, 'prepared-audio.mp3')
+
+    await writeFile(inputPath, request.file.buffer)
+    await runCommand('ffmpeg', ['-y', '-i', inputPath, '-vn', '-ac', '1', '-ar', '16000', '-b:a', '48k', workingAudioPath], { timeout: 60 * 1000 })
+
+    const pythonPath = getPythonPath()
+    const scriptPath = getTranscriptionScript()
+
+    const result = await new Promise((resolve, reject) => {
+      let duration = 0
+      const segments = []
+      let finalText = ''
+      let stdoutBuffer = ''
+      let stderrBuffer = ''
+
+      const child = spawn(pythonPath, [scriptPath, workingAudioPath, words.join(',')])
+      child.stdout.on('data', (chunk) => {
+        stdoutBuffer += chunk.toString()
+        const lines = stdoutBuffer.split('\n')
+        stdoutBuffer = lines.pop() || ''
+        for (const line of lines) {
+          const trimmed = line.trim()
+          if (!trimmed) continue
+          try {
+            const data = JSON.parse(trimmed)
+            if (data.type === 'info') {
+              duration = Number(data.duration || 0)
+            } else if (data.type === 'segment' && data.segment) {
+              segments.push({
+                start: Number(data.segment.start || 0),
+                end: Number(data.segment.end || 0),
+                text: String(data.segment.text || ''),
+                counts: countSegmentWords(String(data.segment.text || ''), words),
+                words: data.segment.words || []
+              })
+            } else if (data.type === 'done') {
+              finalText = String(data.text || '')
+              if (data.duration) duration = Number(data.duration)
+            }
+          } catch {}
+        }
+      })
+      child.stderr.on('data', (chunk) => { stderrBuffer += chunk.toString() })
+      child.on('close', (code) => {
+        if (code === 0) {
+          resolve({ duration, segments, finalText })
+        } else {
+          reject(new Error(`Whisper fehlgeschlagen (Code ${code}): ${stderrBuffer}`))
+        }
+      })
+      child.on('error', reject)
+    })
+
+    const text = result.finalText || result.segments.map((s) => s.text).join(' ')
+    const duration = Math.max(1, Math.round(result.duration || 1))
+    const counts = Object.fromEntries(words.map((word) => [word, countWordOccurrences(text, word)]))
+    const fillerWords = Object.values(counts).reduce((a, b) => a + b, 0)
+    const phraseOverlap = getPhraseOverlap(words, counts)
+    const baseFillerWords = Math.max(0, fillerWords - phraseOverlap)
+    const totalWords = text.trim() ? text.trim().split(/\s+/).length : 0
+    const relativeRate = totalWords > 0 ? (baseFillerWords / totalWords) * 100 : 0
+
+    return response.json({
+      text,
+      duration,
+      counts,
+      fillerWords,
+      baseFillerWords,
+      totalWords,
+      relativeRate,
+      segments: result.segments,
+      mediaTitle: `Live Studio Training (${new Date().toLocaleDateString('de-DE')})`
+    })
+  } catch (err) {
+    console.error('[transcribe-live] Error:', err)
+    return response.status(500).json({ error: 'Live-Transkription fehlgeschlagen: ' + (err.message || String(err)) })
+  } finally {
+    if (temporaryDirectory) {
+      try { await rm(temporaryDirectory, { recursive: true, force: true }) } catch {}
+    }
+  }
+})
+
 // In-memory failed deletion attempts per IP: ip -> { count: number, lockedUntil: number | null, lastAttempt: number }
 const deleteAttemptsByIp = new Map()
 
