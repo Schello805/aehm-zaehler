@@ -480,19 +480,62 @@ function App() {
   const [installPrompt, setInstallPrompt] = useState<any>(null)
   const playbackUrl = useMemo(() => (file ? URL.createObjectURL(file) : ''), [file])
 
-  // Read Deep-Link query params (?v= or ?url=) on mount & listen for PWA install event
+  const navigateTo = (targetView: 'analyse' | 'ranking' | 'live' | 'settings', pushHistory = true) => {
+    setView(targetView)
+    let path = '/'
+    let title = 'ähm-zähler — Füllwörter in Audio, Video & YouTube erkennen'
+    let desc = 'Kostenloser KI-Füllwörter-Zähler für Audio, Video & YouTube. Erkenne äh, ähm und Floskeln sekundengenau.'
+
+    if (targetView === 'ranking') {
+      path = '/ranking'
+      title = '🏆 Hall of Fame & Ähm-Ranking — Füllwort-Rekorde | ähm-zähler'
+      desc = 'Die offizielle Füllwort-Rangliste: Entdecke die analysierten Podcasts, YouTube-Videos und Sprecher mit den meisten und wenigsten Füllwörtern.'
+    } else if (targetView === 'live') {
+      path = '/live'
+      title = '🔴 Live Studio & Sprechtrainer — Echtzeit Füllwörter zählen | ähm-zähler'
+      desc = 'Trainiere freies Sprechen und Präsentationen im Live-Studio mit Sofort-Feedback und KI-Analyse deiner Füllwörter.'
+    } else if (targetView === 'settings') {
+      path = '/settings'
+      title = '⚙️ Suchwörter & Einstellungen | ähm-zähler'
+      desc = 'Passe deine Füllwort-Suchliste, Erkennungsmuster und Einstellungen individuell an.'
+    }
+
+    try {
+      document.title = title
+      const metaDesc = document.querySelector('meta[name="description"]')
+      if (metaDesc) metaDesc.setAttribute('content', desc)
+      const canonical = document.querySelector('link[rel="canonical"]')
+      if (canonical) canonical.setAttribute('href', `https://aehm-zaehler.de${path}`)
+      const ogTitle = document.querySelector('meta[property="og:title"]')
+      if (ogTitle) ogTitle.setAttribute('content', title)
+      const ogDesc = document.querySelector('meta[property="og:description"]')
+      if (ogDesc) ogDesc.setAttribute('content', desc)
+      const ogUrl = document.querySelector('meta[property="og:url"]')
+      if (ogUrl) ogUrl.setAttribute('content', `https://aehm-zaehler.de${path}`)
+
+      if (pushHistory && window.location.pathname !== path) {
+        window.history.pushState({ view: targetView }, '', path)
+      }
+    } catch {}
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  // Read URL Pathname, Deep-Link query params (?v= or ?url=) on mount & listen for PWA install / popstate events
   useEffect(() => {
     try {
+      const pathname = window.location.pathname
       const params = new URLSearchParams(window.location.search)
       const viewParam = params.get('view')
       const hash = window.location.hash.replace('#', '')
 
-      if (viewParam === 'ranking' || hash === 'ranking') {
-        setView('ranking')
-      } else if (viewParam === 'live' || hash === 'live') {
-        setView('live')
-      } else if (viewParam === 'settings' || hash === 'settings') {
-        setView('settings')
+      if (pathname === '/ranking' || viewParam === 'ranking' || hash === 'ranking') {
+        navigateTo('ranking', false)
+      } else if (pathname === '/live' || viewParam === 'live' || hash === 'live') {
+        navigateTo('live', false)
+      } else if (pathname === '/settings' || pathname === '/einstellungen' || viewParam === 'settings' || hash === 'settings') {
+        navigateTo('settings', false)
+      } else {
+        navigateTo('analyse', false)
       }
 
       const vParam = params.get('v')
@@ -515,8 +558,7 @@ function App() {
           setActiveHistoryId(match.id)
           setUrl(match.source)
           setFile(null)
-          setView('analyse')
-          window.scrollTo({ top: 0, behavior: 'smooth' })
+          navigateTo('analyse', false)
         } else {
           // 2. Automatically launch analysis (server cache will return result in <100ms if available)
           setTimeout(() => {
@@ -526,12 +568,30 @@ function App() {
       }
     } catch {}
 
+    const handlePopState = () => {
+      const path = window.location.pathname
+      if (path === '/ranking') {
+        navigateTo('ranking', false)
+      } else if (path === '/live') {
+        navigateTo('live', false)
+      } else if (path === '/settings' || path === '/einstellungen') {
+        navigateTo('settings', false)
+      } else {
+        navigateTo('analyse', false)
+      }
+    }
+    window.addEventListener('popstate', handlePopState)
+
     const handleInstallPrompt = (e: any) => {
       e.preventDefault()
       setInstallPrompt(e)
     }
     window.addEventListener('beforeinstallprompt', handleInstallPrompt)
-    return () => window.removeEventListener('beforeinstallprompt', handleInstallPrompt)
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState)
+      window.removeEventListener('beforeinstallprompt', handleInstallPrompt)
+    }
   }, [])
 
   const activeSourceUrl = useMemo(() => {
@@ -1528,7 +1588,6 @@ ${advice.summary}
   }
 
   const resetToHome = () => {
-    setView('analyse')
     setResult(null)
     setActiveHistoryId(null)
     setUrl('')
@@ -1548,7 +1607,7 @@ ${advice.summary}
         window.history.replaceState({}, '', window.location.pathname)
       }
     } catch {}
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+    navigateTo('analyse')
   }
 
   const analyze = async (overrideUrl?: string) => {
@@ -1682,8 +1741,7 @@ ${advice.summary}
         setHistory((current) => [historyEntry, ...current].slice(0, 50))
         setActiveHistoryId(historyEntry.id)
         setIsAnalyzing(false)
-        setView('analyse')
-        window.scrollTo({ top: 0, behavior: 'smooth' })
+        navigateTo('analyse')
       }
     }
 
@@ -1836,18 +1894,46 @@ ${advice.summary}
         </button>
 
         <div className="nav-center-tabs">
-          <button className={view === 'analyse' ? 'nav-link active' : 'nav-link'} onClick={() => setView('analyse')} type="button">
+          <a
+            href="/"
+            className={view === 'analyse' ? 'nav-link active' : 'nav-link'}
+            onClick={(e) => {
+              e.preventDefault()
+              navigateTo('analyse')
+            }}
+          >
             🎙️ Analyse
-          </button>
-          <button className={view === 'ranking' ? 'nav-link active ranking-tab-link' : 'nav-link ranking-tab-link'} onClick={() => setView('ranking')} type="button">
+          </a>
+          <a
+            href="/ranking"
+            className={view === 'ranking' ? 'nav-link active ranking-tab-link' : 'nav-link ranking-tab-link'}
+            onClick={(e) => {
+              e.preventDefault()
+              navigateTo('ranking')
+            }}
+          >
             🏆 Ähm-Ranking <span className="ranking-badge-pill">Top</span>
-          </button>
-          <button className={view === 'live' ? 'nav-link active' : 'nav-link'} onClick={() => setView('live')} type="button">
+          </a>
+          <a
+            href="/live"
+            className={view === 'live' ? 'nav-link active' : 'nav-link'}
+            onClick={(e) => {
+              e.preventDefault()
+              navigateTo('live')
+            }}
+          >
             🔴 Live Studio
-          </button>
-          <button className={view === 'settings' ? 'nav-link active' : 'nav-link'} onClick={() => setView('settings')} type="button">
+          </a>
+          <a
+            href="/settings"
+            className={view === 'settings' ? 'nav-link active' : 'nav-link'}
+            onClick={(e) => {
+              e.preventDefault()
+              navigateTo('settings')
+            }}
+          >
             ⚙️ Einstellungen
-          </button>
+          </a>
         </div>
 
         <div className="nav-actions">
@@ -1909,9 +1995,9 @@ ${advice.summary}
             setActiveHistoryId(entry.id)
             setUrl(entry.source.startsWith('http') ? entry.source : '')
             setFile(null)
-            setView('analyse')
+            navigateTo('analyse')
           }}
-          onGoToAnalysis={() => setView('analyse')}
+          onGoToAnalysis={() => navigateTo('analyse')}
           onDeleteEntry={deleteHistoryEntry}
         />
       ) : view === 'live' ? (
@@ -1922,7 +2008,7 @@ ${advice.summary}
             if (audioFile) setFile(audioFile)
             setUrl('')
             setActiveHistoryId(null)
-            setView('analyse')
+            navigateTo('analyse')
           }}
           onSaveToHistory={(entry) => {
             setHistory((prev) => [entry, ...prev.filter((h) => h.id !== entry.id)])
@@ -2957,7 +3043,7 @@ ${advice.summary}
                                   setActiveHistoryId(entry.id)
                                   setUrl(entry.source.startsWith('http') ? entry.source : '')
                                   setFile(null)
-                                  setView('analyse')
+                                  navigateTo('analyse')
                                 }}
                               >Öffnen</button>
                               {editingHistoryId === entry.id ? (
