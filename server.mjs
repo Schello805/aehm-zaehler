@@ -744,6 +744,7 @@ app.post('/api/analyze-cancel/:id', (request, response) => {
 })
 
 app.post('/api/analyze', upload.single('file'), async (request, response) => {
+  request.body = request.body || {}
   let temporaryDirectory
   let childProcess = null
   let isAborted = false
