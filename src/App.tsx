@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import { RankingView } from './components/RankingView'
+import { LegalModal, type LegalTab } from './components/LegalModal'
 import { defaultEstimatedAnalysisSeconds, getEstimatedAnalysisSeconds } from './progress'
 
 declare global {
@@ -384,6 +385,7 @@ function App() {
   const [isFetchingMediaInfo, setIsFetchingMediaInfo] = useState(false)
   const [queueInfo, setQueueInfo] = useState<{ position: number; total: number; message: string } | null>(null)
   const [showSelfHostModal, setShowSelfHostModal] = useState(false)
+  const [legalModalTab, setLegalModalTab] = useState<LegalTab | null>(null)
   const [speakerFilter, setSpeakerFilter] = useState<string>('all')
   const [editingSpeakerId, setEditingSpeakerId] = useState<string | null>(null)
   const [editingSpeakerName, setEditingSpeakerName] = useState<string>('')
@@ -580,6 +582,12 @@ function App() {
       const viewParam = params.get('view')
       const hash = window.location.hash.replace('#', '')
 
+      if (pathname === '/impressum' || hash === 'impressum') {
+        setLegalModalTab('impressum')
+      } else if (pathname === '/datenschutz' || hash === 'datenschutz') {
+        setLegalModalTab('datenschutz')
+      }
+
       if (pathname === '/ranking' || viewParam === 'ranking' || hash === 'ranking') {
         navigateTo('ranking', false)
       } else if (pathname === '/live' || viewParam === 'live' || hash === 'live') {
@@ -636,9 +644,30 @@ function App() {
         isLiveActiveRef.current = false
       }
 
+      const currentHash = window.location.hash.replace('#', '')
+      if (path === '/impressum' || currentHash === 'impressum') {
+        setLegalModalTab('impressum')
+      } else if (path === '/datenschutz' || currentHash === 'datenschutz') {
+        setLegalModalTab('datenschutz')
+      } else {
+        setLegalModalTab(null)
+      }
+
       navigateTo(target, false)
     }
     window.addEventListener('popstate', handlePopState)
+
+    const handleHashChange = () => {
+      const currentHash = window.location.hash.replace('#', '')
+      if (currentHash === 'impressum') {
+        setLegalModalTab('impressum')
+      } else if (currentHash === 'datenschutz') {
+        setLegalModalTab('datenschutz')
+      } else if (!currentHash) {
+        setLegalModalTab(null)
+      }
+    }
+    window.addEventListener('hashchange', handleHashChange)
 
     const handleInstallPrompt = (e: any) => {
       e.preventDefault()
@@ -648,6 +677,7 @@ function App() {
 
     return () => {
       window.removeEventListener('popstate', handlePopState)
+      window.removeEventListener('hashchange', handleHashChange)
       window.removeEventListener('beforeinstallprompt', handleInstallPrompt)
     }
   }, [])
@@ -3153,10 +3183,16 @@ ${advice.summary}
             </section>
           )}
 
-          <AppFooter />
+          {/* End of analyse subview */}
         </>
       )}
-      {(view === 'settings' || view === 'ranking') && <AppFooter />}
+
+      <AppFooter onOpenLegal={(tab) => {
+        setLegalModalTab(tab)
+        try {
+          window.history.pushState({ legal: tab }, '', `#${tab}`)
+        } catch {}
+      }} />
 
       {/* Self-Host & Queue Modal */}
       {(queueInfo || showSelfHostModal) && (
@@ -3235,11 +3271,27 @@ ${advice.summary}
           </div>
         </div>
       )}
+
+      {/* Legal Documents Modal (Impressum & Datenschutzerklärung) */}
+      {legalModalTab && (
+        <LegalModal
+          tab={legalModalTab}
+          setTab={setLegalModalTab}
+          onClose={() => {
+            setLegalModalTab(null)
+            try {
+              if (window.location.hash === '#impressum' || window.location.hash === '#datenschutz') {
+                window.history.replaceState({}, '', window.location.pathname + (window.location.search || ''))
+              }
+            } catch {}
+          }}
+        />
+      )}
     </main>
   )
 }
 
-function AppFooter() {
+function AppFooter({ onOpenLegal }: { onOpenLegal?: (tab: LegalTab) => void }) {
   const revision = typeof __APP_REVISION__ !== 'undefined' ? __APP_REVISION__ : 'dev'
   const buildDate = typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : '2026'
 
@@ -3262,6 +3314,27 @@ function AppFooter() {
         <span className="footer-author">Erstellt durch Michael Schellenberger (VibeCoder)</span>
       </div>
       <div className="footer-right">
+        {onOpenLegal && (
+          <div className="footer-legal-links">
+            <button
+              type="button"
+              className="footer-legal-btn"
+              onClick={() => onOpenLegal('impressum')}
+              title="Impressum nach § 5 DDG anzeigen"
+            >
+              Impressum
+            </button>
+            <span className="footer-divider">•</span>
+            <button
+              type="button"
+              className="footer-legal-btn"
+              onClick={() => onOpenLegal('datenschutz')}
+              title="Datenschutzerklärung nach DSGVO anzeigen"
+            >
+              Datenschutz
+            </button>
+          </div>
+        )}
         <a
           href="https://github.com/Schello805/aehm-zaehler"
           target="_blank"
