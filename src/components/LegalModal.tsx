@@ -176,9 +176,9 @@ export function LegalModal({ tab, setTab, onClose }: LegalModalProps) {
               </section>
 
               <section className="legal-section">
-                <h3>5. Lokale Speicherung (Local Storage) & Keine Tracking-Cookies</h3>
+                <h3>5. Lokale Speicherung (localStorage)</h3>
                 <p>
-                  Diese Website verwendet <strong>keine Tracking-Cookies</strong>, keine Werbe-Pixel und keine externen Web-Analytics-Dienste wie Google Analytics.
+                  Diese Website verwendet <strong>keine Werbe-Cookies</strong>, keine Marketing-Pixel und keine Werbenetzwerke (wie Google Ads oder Meta).
                 </p>
                 <p>
                   Zur Gewährleistung der Grundfunktionen nutzen wir den lokalen Speicher Ihres Browsers (<code>localStorage</code> gemäß Art. 6 Abs. 1 lit. f DSGVO):
@@ -191,7 +191,26 @@ export function LegalModal({ tab, setTab, onClose }: LegalModalProps) {
               </section>
 
               <section className="legal-section">
-                <h3>6. Server-Log-Dateien</h3>
+                <h3>6. Web-Analyse mit selbst gehostetem Matomo</h3>
+                <p>
+                  Wir nutzen auf dieser Website die datenschutzfreundliche Open-Source-Software <strong>Matomo</strong> zur statistischen Reichweitenmessung und kontinuierlichen Verbesserung unserer Webanwendung.
+                </p>
+                <p>
+                  <strong>Selbst gehostet auf eigenem Server:</strong> Die Software wird vollständig auf unserer eigenen Serverinfrastruktur (<code>https://analytics.schellenberger.biz/</code>) betrieben. Es findet <u>keine Übermittlung</u> an Dritte oder externe Cloud-Dienste statt. Sämtliche Analysedaten verbleiben vollständig in unserer Kontrolle.
+                </p>
+                <p>
+                  <strong>IP-Anonymisierung:</strong> Vor der Speicherung wird Ihre IP-Adresse durch Maskierung der letzten Oktette anonymisiert, sodass kein Personenbezug herstellbar ist.
+                </p>
+                <p>
+                  <strong>Rechtsgrundlage:</strong> Die Verarbeitung erfolgt auf Grundlage unseres berechtigten Interesses an der bedarfsgerechten Optimierung und Reichweitenanalyse unseres Angebots gemäß Art. 6 Abs. 1 lit. f DSGVO.
+                </p>
+                <p>
+                  <strong>Do Not Track:</strong> Wenn Sie in Ihrem Browser die „Do Not Track“-Funktion (DNT) aktiviert haben, wird Ihr Besuch automatisch nicht erfasst.
+                </p>
+              </section>
+
+              <section className="legal-section">
+                <h3>7. Server-Log-Dateien</h3>
                 <p>
                   Der Provider dieser Website erhebt und speichert automatisch Daten in sogenannten Server-Log-Dateien, die Ihr Browser automatisch an uns übermittelt:
                 </p>
@@ -208,14 +227,14 @@ export function LegalModal({ tab, setTab, onClose }: LegalModalProps) {
               </section>
 
               <section className="legal-section">
-                <h3>7. Externe Schnittstellen (Spotify & YouTube)</h3>
+                <h3>8. Externe Schnittstellen (Spotify & YouTube)</h3>
                 <p>
                   Wenn Sie freiwillig Links zu Spotify-Podcasts oder YouTube-Videos zur Analyse übermitteln, ruft unser Server öffentlich verfügbare Metadaten (Titel, Dauer, Bild-Vorschau) über die offiziellen Schnittstellen (Spotify Web API bzw. oEmbed/yt-dlp) ab, um das Ergebnis darzustellen.
                 </p>
               </section>
 
               <section className="legal-section">
-                <h3>8. Ihre Rechte als betroffene Person</h3>
+                <h3>9. Ihre Rechte als betroffene Person</h3>
                 <p>
                   Sie haben nach der Datenschutz-Grundverordnung (DSGVO) folgende Rechte gegenüber der verantwortlichen Stelle:
                 </p>
