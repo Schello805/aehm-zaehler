@@ -5805,29 +5805,70 @@ body { transition: background 0.35s ease, color 0.35s ease; }
 @media (max-width: 768px) {
   /* Navigation & Header */
   .topbar {
-    flex-direction: column;
-    align-items: stretch;
-    padding: 10px 12px;
-    gap: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px 10px;
+    gap: 8px 10px;
     height: auto;
+    min-height: 0;
+    position: -webkit-sticky;
+    position: sticky;
+    top: 0;
+    z-index: 1000;
   }
 
   .brand {
-    justify-content: space-between;
-    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 0;
+  }
+
+  .brand-logo-img {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+  }
+
+  .brand-title {
+    font-size: 17px;
+  }
+
+  .nav-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .self-host-badge-btn,
+  .install-pwa-btn {
+    padding: 5px 9px;
+    font-size: 11.5px;
+    min-height: 30px;
+    border-radius: 999px;
+  }
+
+  .dark-toggle {
+    width: 30px;
+    height: 30px;
+    font-size: 14px;
   }
 
   .nav-center-tabs {
+    order: 3;
     display: flex;
     width: 100%;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
-    padding: 4px;
-    gap: 6px;
+    padding: 3px;
+    gap: 4px;
     background: var(--surface-subtle);
     border: 1px solid var(--line);
     border-radius: 999px;
+    margin-top: 2px;
   }
 
   .nav-center-tabs::-webkit-scrollbar {
@@ -5837,12 +5878,12 @@ body { transition: background 0.35s ease, color 0.35s ease; }
   .nav-link {
     flex: 1 0 auto;
     text-align: center;
-    padding: 9px 14px;
-    font-size: 13.5px;
+    padding: 7px 11px;
+    font-size: 12.5px;
     font-weight: 700;
     white-space: nowrap;
     border-radius: 999px;
-    min-height: 40px;
+    min-height: 34px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -5852,8 +5893,129 @@ body { transition: background 0.35s ease, color 0.35s ease; }
   main {
     width: 100% !important;
     max-width: 100% !important;
-    padding: 0 10px !important;
-    margin-top: 10px;
+    padding: 0 12px !important;
+    margin-top: 6px;
+  }
+
+  .workspace {
+    grid-template-columns: 1fr !important;
+    gap: 16px !important;
+  }
+
+  .panel {
+    padding: 18px 14px !important;
+    border-radius: 14px !important;
+  }
+
+  .panel-drop {
+    padding: 22px 14px !important;
+    border-radius: 12px !important;
+  }
+
+  .panel-drop-icon {
+    font-size: 24px !important;
+    margin-bottom: 6px !important;
+  }
+
+  .provider-badges-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+
+  .provider-badge {
+    font-size: 11px !important;
+    padding: 3px 8px !important;
+  }
+
+  .url-input-field,
+  .custom-word-input,
+  .detail-input {
+    height: 46px !important;
+    font-size: 16px !important; /* Prevents auto-zoom in iOS Safari */
+    border-radius: 8px !important;
+  }
+
+  .submit-analyze-btn,
+  .clean-audio-btn {
+    height: 48px !important;
+    font-size: 15px !important;
+    font-weight: 800 !important;
+    border-radius: 10px !important;
+  }
+
+  /* Warteschlange / History Section Mobile */
+  .history-section {
+    padding-bottom: 24px;
+  }
+
+  .history-head {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+
+  .history-caption {
+    margin: 0;
+    font-size: 11px;
+  }
+
+  .history-clear-button {
+    margin: 0;
+    font-size: 11px;
+    align-self: flex-start;
+  }
+
+  .history-tools {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    gap: 8px;
+    margin: 0;
+  }
+
+  .history-tools input,
+  .history-tools select {
+    width: 100%;
+    min-width: 0;
+    height: 44px;
+    font-size: 14px;
+    border-radius: 8px;
+  }
+
+  .history-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--surface);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  }
+
+  .history-table {
+    min-width: 560px;
+  }
+
+  .history-table th,
+  .history-table td {
+    padding: 12px 10px;
+    font-size: 13px;
+  }
+
+  .history-result-button {
+    padding: 7px 12px;
+    font-size: 12.5px;
+    border-radius: 6px;
+    min-height: 34px;
+  }
+
+  .history-icon-button {
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
   }
 
   /* Ranking Hero & Stats */
@@ -5971,14 +6133,17 @@ body { transition: background 0.35s ease, color 0.35s ease; }
 
   .podium-column.rank-1 {
     order: 1 !important;
+    margin-top: 0 !important;
   }
 
   .podium-column.rank-2 {
     order: 2 !important;
+    margin-top: 0 !important;
   }
 
   .podium-column.rank-3 {
     order: 3 !important;
+    margin-top: 0 !important;
   }
 
   .podium-pedestal {
@@ -5988,6 +6153,7 @@ body { transition: background 0.35s ease, color 0.35s ease; }
   .podium-card {
     border-radius: 12px !important;
     padding: 16px 14px !important;
+    min-height: auto !important;
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
   }
 
@@ -6008,8 +6174,7 @@ body { transition: background 0.35s ease, color 0.35s ease; }
     margin-top: 6px;
   }
 
-  .podium-open-btn,
-  .podium-supercut-btn {
+  .podium-open-btn {
     flex: 1 1 auto;
     padding: 10px 12px;
     font-size: 13px;
@@ -6096,19 +6261,38 @@ body { transition: background 0.35s ease, color 0.35s ease; }
   }
 
   /* Sniper Player on Mobile */
-  .sniper-container {
-    padding: 12px 10px;
+  .sniper-card {
+    padding: 14px 12px !important;
   }
 
-  .sniper-control-bar {
-    flex-wrap: wrap;
-    gap: 8px;
+  .sniper-controls-grid {
+    gap: 12px;
   }
 
-  .sniper-btn {
-    min-height: 42px;
-    padding: 8px 12px;
-    font-size: 13px;
+  .sniper-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .sniper-btn-group {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .sniper-btn-group button {
+    flex: 1;
+    min-height: 40px;
+  }
+
+  /* Footer on Mobile */
+  footer {
+    flex-direction: column !important;
+    align-items: center !important;
+    text-align: center !important;
+    gap: 10px !important;
+    padding: 24px 10px 32px !important;
   }
 }
 
@@ -6122,13 +6306,12 @@ body { transition: background 0.35s ease, color 0.35s ease; }
   }
 
   .podium-open-btn,
-  .podium-supercut-btn,
   .podium-delete-btn {
     width: 100%;
   }
 
   .nav-link {
-    padding: 7px 10px;
+    padding: 6px 9px;
     font-size: 12px;
   }
 }
