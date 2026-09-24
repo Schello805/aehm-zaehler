@@ -188,10 +188,16 @@ const parsePodcastRss = (xmlText) => {
 
 const resolveSpotifyPodcast = async (url) => {
   try {
-    const epMatch = url.match(/spotify\.com\/episode\/([a-zA-Z0-9]+)/i)
+    const decodedUrl = decodeURIComponent(url)
+    const epMatch = decodedUrl.match(/spotify\.com\/(?:episode|show|track)\/([^/?#&]+)/i) || decodedUrl.match(/spotify:(?:episode|show|track):([^/?#&]+)/i)
     if (!epMatch) return null
-    const epId = epMatch[1]
-    console.log('[spotify] Resolving episode ID:', epId)
+    
+    // Clean trailing tracking / context tokens (e.g. _UUID, %3A, :timestamp)
+    let epId = epMatch[1].trim()
+    if (epId.includes('_') || epId.includes(':')) {
+      epId = epId.split(/[_:]/)[0]
+    }
+    console.log('[spotify] Resolving clean episode ID:', epId)
 
     let title = ''
     let showName = ''
