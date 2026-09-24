@@ -3077,10 +3077,24 @@ ${advice.summary}
 }
 
 function AppFooter() {
+  const revision = typeof __APP_REVISION__ !== 'undefined' ? __APP_REVISION__ : 'dev'
+  const buildDate = typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : '2026'
+
   return (
     <footer>
       <div className="footer-left">
-        <span>ähm-zähler / 2026</span>
+        <span className="footer-brand">ähm-zähler</span>
+        <span className="footer-divider">•</span>
+        <a
+          href={`https://github.com/Schello805/aehm-zaehler/commit/${revision}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="footer-rev-badge"
+          title={`Git Commit: ${revision} (${buildDate})`}
+        >
+          <span className="rev-dot">●</span>
+          <span>Rev. <code>{revision}</code></span>
+        </a>
         <span className="footer-divider">•</span>
         <span className="footer-author">Erstellt durch Michael Schellenberger (VibeCoder)</span>
       </div>

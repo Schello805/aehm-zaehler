@@ -2961,6 +2961,46 @@ footer {
   opacity: 0.9;
 }
 
+.footer-rev-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  color: var(--ink);
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-decoration: none;
+  transition: all 0.15s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.footer-rev-badge code {
+  font-family: 'SFMono-Regular', Consolas, Monaco, monospace;
+  color: #3b82f6;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+}
+
+.footer-rev-badge .rev-dot {
+  color: #10b981;
+  font-size: 9px;
+  animation: pulse-dot 2.5s infinite ease-in-out;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.85); }
+}
+
+.footer-rev-badge:hover {
+  border-color: #3b82f6;
+  background: rgba(59, 130, 246, 0.05);
+  transform: translateY(-1px);
+}
+
 .footer-divider {
   opacity: 0.4;
 }
