@@ -65,7 +65,8 @@ def main() -> None:
 
     audio_samples = None
     try:
-        if input_path.stat().st_size < 40 * 1024 * 1024:
+        # Only cache raw float32 samples in RAM for shorter files (< 15MB / ~35 min) to prevent OOM on multi-hour podcasts
+        if input_path.stat().st_size < 15 * 1024 * 1024:
             audio_samples = decode_audio(str(input_path), sampling_rate=16000)
     except Exception as e:
         sys.stderr.write(f'Audio decode warning: {e}\n')
