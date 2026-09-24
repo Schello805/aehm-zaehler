@@ -6316,6 +6316,33 @@ body { transition: background 0.35s ease, color 0.35s ease; }
   }
 }
 
+.live-tab-pulse-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
+  animation: liveBadgePulse 1.4s ease-in-out infinite;
+}
+
+@keyframes liveBadgePulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 0.85;
+  }
+}
+
+
 
 
 

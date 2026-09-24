@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import { RankingView } from './components/RankingView'
 import { defaultEstimatedAnalysisSeconds, getEstimatedAnalysisSeconds } from './progress'
@@ -335,6 +335,12 @@ const getOptimizationAdvice = (result: Result) => {
 
 function App() {
   const [view, setView] = useState<'analyse' | 'ranking' | 'live' | 'settings'>('analyse')
+  const [isLiveActive, setIsLiveActive] = useState(false)
+  const isLiveActiveRef = useRef(false)
+  const handleLiveActiveChange = useCallback((active: boolean) => {
+    setIsLiveActive(active)
+    isLiveActiveRef.current = active
+  }, [])
   const [darkMode, setDarkMode] = useState<boolean>(() => localStorage.getItem('dark-mode') === 'true')
   const [words, setWords] = useState<string[]>(() => {
     try {
@@ -516,6 +522,17 @@ function App() {
   }, [file, result])
 
   const navigateTo = (targetView: 'analyse' | 'ranking' | 'live' | 'settings', pushHistory = true) => {
+    if (view === 'live' && targetView !== 'live' && isLiveActiveRef.current) {
+      const confirmLeave = window.confirm(
+        'Deine Live-Session läuft gerade! Möchtest du das Live Studio wirklich verlassen? Deine laufende Aufnahme und das Transkript gehen dabei verloren.'
+      )
+      if (!confirmLeave) {
+        return
+      }
+      setIsLiveActive(false)
+      isLiveActiveRef.current = false
+    }
+
     setView(targetView)
     let path = '/'
     let title = 'ähm-zähler — Füllwörter in Audio, Video & YouTube erkennen'
@@ -605,15 +622,21 @@ function App() {
 
     const handlePopState = () => {
       const path = window.location.pathname
-      if (path === '/ranking') {
-        navigateTo('ranking', false)
-      } else if (path === '/live') {
-        navigateTo('live', false)
-      } else if (path === '/settings' || path === '/einstellungen') {
-        navigateTo('settings', false)
-      } else {
-        navigateTo('analyse', false)
+      const target = path === '/ranking' ? 'ranking' : path === '/live' ? 'live' : path === '/settings' || path === '/einstellungen' ? 'settings' : 'analyse'
+
+      if (view === 'live' && target !== 'live' && isLiveActiveRef.current) {
+        const confirmLeave = window.confirm(
+          'Deine Live-Session läuft gerade! Möchtest du das Live Studio wirklich verlassen? Deine laufende Aufnahme und das Transkript gehen dabei verloren.'
+        )
+        if (!confirmLeave) {
+          window.history.pushState({ view: 'live' }, '', '/live')
+          return
+        }
+        setIsLiveActive(false)
+        isLiveActiveRef.current = false
       }
+
+      navigateTo(target, false)
     }
     window.addEventListener('popstate', handlePopState)
 
@@ -1623,6 +1646,17 @@ ${advice.summary}
   }
 
   const resetToHome = () => {
+    if (view === 'live' && isLiveActiveRef.current) {
+      const confirmLeave = window.confirm(
+        'Deine Live-Session läuft gerade! Möchtest du das Live Studio wirklich verlassen? Deine laufende Aufnahme und das Transkript gehen dabei verloren.'
+      )
+      if (!confirmLeave) {
+        return
+      }
+      setIsLiveActive(false)
+      isLiveActiveRef.current = false
+    }
+
     setResult(null)
     setActiveHistoryId(null)
     setUrl('')
@@ -1968,7 +2002,7 @@ ${advice.summary}
               navigateTo('live')
             }}
           >
-            🔴 Live Studio
+            🔴 Live Studio {isLiveActive && <span className="live-tab-pulse-badge">LIVE</span>}
           </a>
           <a
             href="/settings"
@@ -2049,7 +2083,10 @@ ${advice.summary}
       ) : view === 'live' ? (
         <LiveStudio
           words={words}
+          onActiveChange={handleLiveActiveChange}
           onOpenInAnalysis={(res, audioFile) => {
+            setIsLiveActive(false)
+            isLiveActiveRef.current = false
             setResult(res)
             if (audioFile) setFile(audioFile)
             setUrl('')
@@ -3580,11 +3617,13 @@ function countTargetInTokens(tokens: string[], target: string): number {
 function LiveStudio({
   words,
   onOpenInAnalysis,
-  onSaveToHistory
+  onSaveToHistory,
+  onActiveChange
 }: {
   words: string[]
   onOpenInAnalysis?: (result: Result, audioFile?: File) => void
   onSaveToHistory?: (entry: HistoryEntry) => void
+  onActiveChange?: (isActive: boolean) => void
 }) {
   const [isListening, setIsListening] = useState(false)
   const isListeningRef = useRef(false)
@@ -3603,6 +3642,45 @@ function LiveStudio({
   const [liveReportResult, setLiveReportResult] = useState<Result | null>(null)
   const [showReportModal, setShowReportModal] = useState(false)
   const [copiedReport, setCopiedReport] = useState(false)
+
+  // Notify parent whether live session is active & warn on tab close / reload
+  const isSessionOngoing = isListening || (elapsedSeconds > 0 && !showReportModal)
+
+  useEffect(() => {
+    onActiveChange?.(isSessionOngoing)
+  }, [isSessionOngoing, onActiveChange])
+
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isSessionOngoing) {
+        e.preventDefault()
+        e.returnValue = ''
+      }
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+    }
+  }, [isSessionOngoing])
+
+  useEffect(() => {
+    return () => {
+      isListeningRef.current = false
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop() } catch {}
+        recognitionRef.current = null
+      }
+      if (audioRecorderRef.current && audioRecorderRef.current.state !== 'inactive') {
+        try { audioRecorderRef.current.stop() } catch {}
+      }
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach((track) => track.stop())
+        mediaStreamRef.current = null
+      }
+      stopVisualizer()
+      onActiveChange?.(false)
+    }
+  }, [])
 
   const recognitionRef = useRef<any>(null)
   const timerRef = useRef<number | null>(null)
