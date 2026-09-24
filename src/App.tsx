@@ -1823,21 +1823,23 @@ ${advice.summary}
       })
 
       if (!response.ok && !isCompleted) {
-        let errorMsg = `Server-Fehler (${response.status})`
-        try {
-          const text = await response.text()
+        if (response.status === 502) {
+          console.warn('[Analyze] SSE stream received 502 from proxy — background status poller will continue tracking the job...')
+        } else {
+          let errorMsg = `Server-Fehler (${response.status})`
           try {
-            const json = JSON.parse(text)
-            if (json.error) errorMsg = json.error
-          } catch {
-            if (text.includes('502 Bad Gateway')) {
-              errorMsg = '502 Bad Gateway: Der Serverdienst ist nicht erreichbar.'
-            } else if (text && text.length < 300 && !text.includes('<html')) {
-              errorMsg = text
+            const text = await response.text()
+            try {
+              const json = JSON.parse(text)
+              if (json.error) errorMsg = json.error
+            } catch {
+              if (text && text.length < 300 && !text.includes('<html')) {
+                errorMsg = text
+              }
             }
-          }
-        } catch {}
-        throw new Error(errorMsg)
+          } catch {}
+          throw new Error(errorMsg)
+        }
       }
 
       if (response.body) {

@@ -699,6 +699,10 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000)
 
+app.get('/api/health', (request, response) => {
+  return response.json({ ok: true, uptime: process.uptime(), activeJobs: activeJobs.size })
+})
+
 app.get('/api/analyze-status/:id', (request, response) => {
   const id = request.params.id
   const job = activeJobs.get(id)
@@ -840,23 +844,9 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
   }
 
   request.on('close', () => {
-    isAborted = true
     if (heartbeat) clearInterval(heartbeat)
-    const queueIdx = analysisQueue.findIndex((q) => q.jobId === jobId)
-    if (queueIdx !== -1) {
-      const [removed] = analysisQueue.splice(queueIdx, 1)
-      if (removed) removed.isAborted = true
-      notifyQueuePositions()
-    }
-    if (childProcess) {
-      try {
-        childProcess.kill('SIGKILL')
-      } catch {}
-    }
-    if (isSlotAcquired) {
-      isSlotAcquired = false
-      releaseAnalysisSlot()
-    }
+    // Keep job processing in background so status polling (/api/analyze-status/:id) can receive the result.
+    // Explicit cancel is handled via /api/analyze-cancel/:id.
   })
 
   const runAnalysis = async () => {
