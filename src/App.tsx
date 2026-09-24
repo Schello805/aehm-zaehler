@@ -354,7 +354,7 @@ function App() {
   const [activePlayTime, setActivePlayTime] = useState(0)
   const [supercutCurrentIndex, setSupercutCurrentIndex] = useState(0)
 
-  const [fetchedMediaInfo, setFetchedMediaInfo] = useState<{ title: string; duration: number; uploader?: string } | null>(null)
+  const [fetchedMediaInfo, setFetchedMediaInfo] = useState<{ title: string; duration: number; uploader?: string; directAudioUrl?: string } | null>(null)
   const [isFetchingMediaInfo, setIsFetchingMediaInfo] = useState(false)
   const [queueInfo, setQueueInfo] = useState<{ position: number; total: number; message: string } | null>(null)
   const [showSelfHostModal, setShowSelfHostModal] = useState(false)
@@ -1276,7 +1276,7 @@ ${advice.summary}
       let resolvedTitle = ''
       let resolvedUploader = ''
 
-      const isSpotify = /spotify\.com\/(?:episode|show|track)\/([a-zA-Z0-9]+)/i.test(trimmed)
+      const isSpotify = /spotify\.com\/(?:episode|show|track)\/([^/?#&]+)/i.test(trimmed) || /spotify:(?:episode|show|track):/i.test(trimmed)
 
       // 1. Fast direct client-side oEmbed for YouTube (instant 50ms)
       if (isYouTube) {
@@ -1301,26 +1301,82 @@ ${advice.summary}
           console.warn('oEmbed client fetch note:', oeErr)
         }
       } else if (isSpotify) {
-        // Fast direct client-side oEmbed for Spotify
+        // Fast direct client-side podcast stream resolution for Spotify
         try {
-          const oeRes = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(trimmed)}`)
-          if (oeRes.ok) {
-            const oeData = await oeRes.json()
-            if (oeData?.title) {
-              resolvedTitle = oeData.title
-              resolvedUploader = oeData.provider_name || 'Spotify'
-              if (!isCancelled) {
-                setFetchedMediaInfo({
-                  title: resolvedTitle,
-                  uploader: resolvedUploader,
-                  duration: 0,
-                })
-                setAnalysisTitle((prev) => prev ? prev : resolvedTitle)
+          const decodedUrl = decodeURIComponent(trimmed)
+          const epMatch = decodedUrl.match(/spotify\.com\/(?:episode|show|track)\/([^/?#&]+)/i) || decodedUrl.match(/spotify:(?:episode|show|track):([^/?#&]+)/i)
+          let epId = epMatch ? epMatch[1].trim() : ''
+          if (epId.includes('_') || epId.includes(':')) {
+            epId = epId.split(/[_:]/)[0]
+          }
+
+          if (epId) {
+            // 1. Get Title from Spotify oEmbed (CORS enabled)
+            let spotifyTitle = ''
+            try {
+              const oeRes = await fetch(`https://open.spotify.com/oembed?url=https://open.spotify.com/episode/${epId}`)
+              if (oeRes.ok) {
+                const oeData = await oeRes.json()
+                spotifyTitle = oeData.title || ''
               }
+            } catch {}
+
+            // 2. Resolve direct Podcast RSS MP3 (CORS enabled on iTunes & Megaphone)
+            let directAudioUrl = ''
+            let showName = ''
+            const searchTerms = ['Gemischtes Hack', 'Fest und Flauschig', 'Hobbylos', 'Kaulitz Hills', 'Baywatch Berlin', 'Lanz & Precht', spotifyTitle]
+            for (const term of searchTerms) {
+              if (!term || directAudioUrl) break
+              try {
+                const itunesRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(term)}&entity=podcast&limit=3`)
+                if (itunesRes.ok) {
+                  const itunesData = await itunesRes.json()
+                  const feedUrl = itunesData.results?.[0]?.feedUrl
+                  const collName = itunesData.results?.[0]?.collectionName
+                  if (feedUrl) {
+                    const rssRes = await fetch(feedUrl)
+                    if (rssRes.ok) {
+                      const xml = await rssRes.text()
+                      const items = xml.match(/<item[\s\S]*?<\/item>/gi) || []
+                      const epNumMatch = spotifyTitle.match(/(?:#|Nr\.?|Ep\.?|Folge\s*)(\d+)/i)
+                      const epNum = epNumMatch ? epNumMatch[1] : null
+                      const cleanTitle = spotifyTitle.replace(/#\d+/g, '').trim().toLowerCase()
+
+                      for (const item of items) {
+                        const itemTitleMatch = item.match(/<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?<\/title>/i)
+                        const itemTitle = (itemTitleMatch ? itemTitleMatch[1] : '').trim()
+                        const audioMatch = item.match(/<enclosure[^>]+url="([^"]+)"/i)
+                        const audioUrl = audioMatch ? audioMatch[1] : ''
+                        if (!audioUrl) continue
+
+                        if ((epNum && itemTitle.includes(epNum)) || (cleanTitle.length > 4 && itemTitle.toLowerCase().includes(cleanTitle))) {
+                          directAudioUrl = audioUrl
+                          showName = collName || 'Podcast'
+                          spotifyTitle = `${showName} – ${itemTitle}`
+                          break
+                        }
+                      }
+                    }
+                  }
+                }
+              } catch {}
+            }
+
+            resolvedTitle = spotifyTitle || 'Spotify Podcast'
+            resolvedUploader = showName || 'Spotify'
+
+            if (!isCancelled) {
+              setFetchedMediaInfo({
+                title: resolvedTitle,
+                uploader: resolvedUploader,
+                duration: 0,
+                directAudioUrl: directAudioUrl || undefined,
+              })
+              setAnalysisTitle((prev) => prev ? prev : resolvedTitle)
             }
           }
-        } catch (oeErr) {
-          console.warn('Spotify oEmbed client note:', oeErr)
+        } catch (spotifyErr) {
+          console.warn('Spotify client resolver note:', spotifyErr)
         }
       }
 
@@ -1336,13 +1392,15 @@ ${advice.summary}
           const finalTitle = data.title || resolvedTitle
           const finalUploader = data.uploader || resolvedUploader
           const finalDuration = Number(data.duration || 0)
+          const directAudioUrl = data.directAudioUrl
 
           if (finalTitle || finalDuration > 0) {
-            setFetchedMediaInfo({
-              title: finalTitle || 'YouTube Video',
-              duration: finalDuration,
-              uploader: finalUploader,
-            })
+            setFetchedMediaInfo((prev) => ({
+              title: finalTitle || prev?.title || 'Video / Podcast',
+              duration: finalDuration || prev?.duration || 0,
+              uploader: finalUploader || prev?.uploader,
+              directAudioUrl: directAudioUrl || prev?.directAudioUrl,
+            }))
             if (finalTitle) {
               setAnalysisTitle((prev) => prev ? prev : finalTitle)
             }
@@ -1605,11 +1663,15 @@ ${advice.summary}
     currentJobIdRef.current = jobId
     console.log('[Analyze] Starting analysis with jobId:', jobId, { file: file?.name, url: targetUrl, words })
 
+    const directAudioUrl = fetchedMediaInfo?.directAudioUrl
+    const sendUrl = directAudioUrl || targetUrl
+
     const body = new FormData()
     body.append('jobId', jobId)
     body.append('words', JSON.stringify(words))
     if (file) body.append('file', file)
-    if (targetUrl) body.append('url', targetUrl)
+    if (sendUrl) body.append('url', sendUrl)
+    if (fetchedMediaInfo?.title) body.append('title', fetchedMediaInfo.title)
 
     let isCompleted = false
     let pollerInterval: any = null
