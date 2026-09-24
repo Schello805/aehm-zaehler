@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import { RankingView } from './components/RankingView'
+import { HelpView } from './components/HelpView'
 import { LegalModal, type LegalTab } from './components/LegalModal'
 import { defaultEstimatedAnalysisSeconds, getEstimatedAnalysisSeconds } from './progress'
 
@@ -339,7 +340,7 @@ const getOptimizationAdvice = (result: Result) => {
 }
 
 function App() {
-  const [view, setView] = useState<'analyse' | 'ranking' | 'live' | 'settings'>('analyse')
+  const [view, setView] = useState<'analyse' | 'ranking' | 'live' | 'settings' | 'help'>('analyse')
   const [isLiveActive, setIsLiveActive] = useState(false)
   const isLiveActiveRef = useRef(false)
   const handleLiveActiveChange = useCallback((active: boolean) => {
@@ -540,7 +541,7 @@ function App() {
     return ''
   }, [file, result, fetchedMediaInfo])
 
-  const navigateTo = (targetView: 'analyse' | 'ranking' | 'live' | 'settings', pushHistory = true) => {
+  const navigateTo = (targetView: 'analyse' | 'ranking' | 'live' | 'settings' | 'help', pushHistory = true) => {
     if (view === 'live' && targetView !== 'live' && isLiveActiveRef.current) {
       const confirmLeave = window.confirm(
         'Deine Live-Session läuft gerade! Möchtest du das Live Studio wirklich verlassen? Deine laufende Aufnahme und das Transkript gehen dabei verloren.'
@@ -569,6 +570,10 @@ function App() {
       path = '/settings'
       title = '⚙️ Suchwörter & Einstellungen | ähm-zähler'
       desc = 'Passe deine Füllwort-Suchliste, Erkennungsmuster und Einstellungen individuell an.'
+    } else if (targetView === 'help') {
+      path = '/hilfe'
+      title = '📖 Hilfe, Methodik & KI-Modell | ähm-zähler'
+      desc = 'Wie funktioniert der ähm-zähler? Erfahre alles über das KI-Modell faster-whisper, Füllwort-Kategorien, Word-Level Timestamps und Datenschutz.'
     }
 
     try {
@@ -611,6 +616,8 @@ function App() {
         navigateTo('live', false)
       } else if (pathname === '/settings' || pathname === '/einstellungen' || viewParam === 'settings' || hash === 'settings') {
         navigateTo('settings', false)
+      } else if (pathname === '/hilfe' || pathname === '/help' || pathname === '/faq' || viewParam === 'hilfe' || viewParam === 'help' || hash === 'hilfe' || hash === 'help') {
+        navigateTo('help', false)
       } else {
         navigateTo('analyse', false)
       }
@@ -647,7 +654,7 @@ function App() {
 
     const handlePopState = () => {
       const path = window.location.pathname
-      const target = path === '/ranking' ? 'ranking' : path === '/live' ? 'live' : path === '/settings' || path === '/einstellungen' ? 'settings' : 'analyse'
+      const target = path === '/ranking' ? 'ranking' : path === '/live' ? 'live' : path === '/settings' || path === '/einstellungen' ? 'settings' : path === '/hilfe' || path === '/help' || path === '/faq' ? 'help' : 'analyse'
 
       if (view === 'live' && target !== 'live' && isLiveActiveRef.current) {
         const confirmLeave = window.confirm(
@@ -2052,6 +2059,16 @@ ${advice.summary}
           >
             ⚙️ Einstellungen
           </a>
+          <a
+            href="/hilfe"
+            className={view === 'help' ? 'nav-link active' : 'nav-link'}
+            onClick={(e) => {
+              e.preventDefault()
+              navigateTo('help')
+            }}
+          >
+            📖 Hilfe & Methodik
+          </a>
         </div>
 
         <div className="nav-actions">
@@ -2104,6 +2121,12 @@ ${advice.summary}
           setEditValue={setEditValue}
           addWord={addWord}
           saveWord={saveWord}
+        />
+      ) : view === 'help' ? (
+        <HelpView
+          onGoToAnalysis={() => navigateTo('analyse')}
+          onGoToSettings={() => navigateTo('settings')}
+          onGoToLive={() => navigateTo('live')}
         />
       ) : view === 'ranking' ? (
         <RankingView
@@ -3232,12 +3255,15 @@ ${advice.summary}
         </>
       )}
 
-      <AppFooter onOpenLegal={(tab) => {
-        setLegalModalTab(tab)
-        try {
-          window.history.pushState({ legal: tab }, '', `#${tab}`)
-        } catch {}
-      }} />
+      <AppFooter
+        onOpenLegal={(tab) => {
+          setLegalModalTab(tab)
+          try {
+            window.history.pushState({ legal: tab }, '', `#${tab}`)
+          } catch {}
+        }}
+        onOpenHelp={() => navigateTo('help')}
+      />
 
       {/* Self-Host & Queue Modal */}
       {(queueInfo || showSelfHostModal) && (
@@ -3336,7 +3362,7 @@ ${advice.summary}
   )
 }
 
-function AppFooter({ onOpenLegal }: { onOpenLegal?: (tab: LegalTab) => void }) {
+function AppFooter({ onOpenLegal, onOpenHelp }: { onOpenLegal?: (tab: LegalTab) => void; onOpenHelp?: () => void }) {
   const revision = typeof __APP_REVISION__ !== 'undefined' ? __APP_REVISION__ : 'dev'
   const buildDate = typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : '2026'
 
@@ -3359,6 +3385,19 @@ function AppFooter({ onOpenLegal }: { onOpenLegal?: (tab: LegalTab) => void }) {
         <span className="footer-author">Erstellt durch Michael Schellenberger (VibeCoder)</span>
       </div>
       <div className="footer-right">
+        {onOpenHelp && (
+          <>
+            <button
+              type="button"
+              className="footer-legal-btn"
+              onClick={onOpenHelp}
+              title="Hilfe, Methodik & Modell-Informationen anzeigen"
+            >
+              Hilfe & Methodik
+            </button>
+            <span className="footer-divider">•</span>
+          </>
+        )}
         {onOpenLegal && (
           <div className="footer-legal-links">
             <button
