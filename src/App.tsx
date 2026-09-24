@@ -225,6 +225,34 @@ const ensureMultiSpeakerDiarization = (resultData: Result, wordsList: string[]):
   }
 }
 
+export const AHM_VARIANTS: string[] = [
+  "ähm", "aehm", "ehm", "em", "äm", "aem", "öhm", "oehm", "uhm", "erm",
+  "äähm", "ähmm", "ähmmm", "ääähm", "eehm", "eem", "hm", "hmm", "hmmm", "hmmmm",
+  "mhm", "mm", "mmm", "mmmm", "ahem"
+]
+
+export const AH_VARIANTS: string[] = [
+  "äh", "ä", "ah", "aeh", "eh", "öh", "oeh", "ähh", "ähhh", "ää", "äääh", "uh", "eeh", "ehh"
+]
+
+export function matchesToken(curr: string, allowed: string[]): boolean {
+  if (!curr || !allowed || !allowed.length) return false
+  const c = curr.toLowerCase().trim()
+  if (!c) return false
+  if (allowed.includes(c)) return true
+  
+  // Collapse repeated consecutive characters, e.g. "ääähm" -> "ähm", "hmmm" -> "hm", "eeem" -> "em"
+  const collapsed = c.replace(/(.)\1+/gu, "$1")
+  if (allowed.includes(collapsed)) return true
+
+  for (const v of allowed) {
+    const vCollapsed = v.replace(/(.)\1+/gu, "$1")
+    if (vCollapsed === collapsed) return true
+    if (c.length > 3 && v.length > 3 && (c.startsWith(v) || v.startsWith(c))) return true
+  }
+  return false
+}
+
 type ProgressState = {
   percent: number
   step: number
@@ -706,10 +734,10 @@ function App() {
             if (!targetClean || !wClean) return false
             if (wClean === targetClean) return true
             if (targetClean === "äh") {
-              return ["äh", "ä", "ah", "aeh", "eh", "er", "öh", "oeh", "ähh", "ähhh", "ää", "äääh", "uh"].includes(wClean)
+              return matchesToken(wClean, AH_VARIANTS)
             }
             if (targetClean === "ähm") {
-              return ["ähm", "aehm", "ehm", "öhm", "oehm", "uhm", "erm", "äm", "aem", "äähm"].includes(wClean)
+              return matchesToken(wClean, AHM_VARIANTS)
             }
             if (targetClean.length > 3 && (wClean.startsWith(targetClean) || targetClean.startsWith(wClean))) return true
             return false
@@ -3390,37 +3418,37 @@ function Settings({
 // Multi-variant mappings for common German hesitation sounds and filler phrases
 const FILLER_VARIANT_MAP: Record<string, string[][][]> = {
   "äh": [
-    [["äh", "ä", "ah", "aeh", "eh", "er", "öh", "oeh", "ähh", "ähhh", "ää", "äääh", "uh"]]
+    [AH_VARIANTS]
   ],
   "ähm": [
-    [["ähm", "aehm", "ehm", "öhm", "oehm", "uhm", "erm", "äm", "aem", "äähm"]]
+    [AHM_VARIANTS]
   ],
   "öh": [
-    [["öh", "oeh", "ö", "öhh"]]
+    [["öh", "oeh", "ö", "öhh", "öööh"]]
   ],
   "hm": [
-    [["hm", "hmm", "hmmm"]]
+    [["hm", "hmm", "hmmm", "hmmmm", "mhm", "mm", "mmm"]]
   ],
   "mhm": [
-    [["mhm", "mm-hmm", "mmhmm"]]
+    [["mhm", "mm-hmm", "mmhmm", "hm", "hmm"]]
   ],
   "also äh": [
-    [["also", "alzo"], ["äh", "ä", "ah", "aeh", "eh", "er", "öh", "oeh", "ähh", "ää", "uh"]]
+    [["also", "alzo"], AH_VARIANTS]
   ],
   "also ähm": [
-    [["also", "alzo"], ["ähm", "aehm", "ehm", "öhm", "oehm", "uhm", "erm", "äm", "aem", "äähm"]]
+    [["also", "alzo"], AHM_VARIANTS]
   ],
   "aber äh": [
-    [["aber"], ["äh", "ä", "ah", "aeh", "eh", "er", "öh", "oeh", "ähh", "ää", "uh"]]
+    [["aber"], AH_VARIANTS]
   ],
   "aber ähm": [
-    [["aber"], ["ähm", "aehm", "ehm", "öhm", "oehm", "uhm", "erm", "äm", "aem", "äähm"]]
+    [["aber"], AHM_VARIANTS]
   ],
   "und äh": [
-    [["und"], ["äh", "ä", "ah", "aeh", "eh", "er", "öh", "oeh", "ähh", "ää", "uh"]]
+    [["und"], AH_VARIANTS]
   ],
   "und ähm": [
-    [["und"], ["ähm", "aehm", "ehm", "öhm", "oehm", "uhm", "erm", "äm", "aem", "äähm"]]
+    [["und"], AHM_VARIANTS]
   ],
   "sozusagen": [
     [["sozusagen", "sozusagn", "sozusage", "sozesagen", "sozusagens"]],
@@ -3495,7 +3523,7 @@ function countTargetInTokens(tokens: string[], target: string): number {
           for (let j = 0; j < plen; j++) {
             const allowed = patternSeq[j]
             const curr = tokens[i + j]
-            if (!allowed.some(v => v === curr || (curr.length > 3 && (curr.startsWith(v) || v.startsWith(curr))))) {
+            if (!matchesToken(curr, allowed)) {
               seqMatch = false
               break
             }
@@ -3527,7 +3555,11 @@ function countTargetInTokens(tokens: string[], target: string): number {
       const t = targetTokens[j]
       const actual = tokens[i + j]
       if (actual !== t) {
-        if (t.length > 3 && (actual.startsWith(t) || t.startsWith(actual))) {
+        const actualCollapsed = actual.replace(/(.)\1+/gu, "$1")
+        const tCollapsed = t.replace(/(.)\1+/gu, "$1")
+        if (actualCollapsed === tCollapsed) {
+          // OK elongation match
+        } else if (t.length > 3 && (actual.startsWith(t) || t.startsWith(actual))) {
           // OK stem match
         } else {
           match = false
@@ -3959,6 +3991,11 @@ function LiveStudio({
           }
 
           segmentFillersRef.current.set(segKey, segUpdated)
+          console.log("[LiveStudio] onresult:", {
+            isFinal,
+            allAlts,
+            segUpdated
+          })
         }
 
         currentSessionFinalText = sessFinal
@@ -4265,12 +4302,18 @@ function LiveStudio({
     const wordsInText = text.split(/(\s+)/)
     return wordsInText.map((chunk, idx) => {
       const cleanChunk = chunk.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "")
-      const isFiller = cleanChunk && words.some((w) => {
+      if (!cleanChunk) return <span key={idx}>{chunk}</span>
+
+      const isFiller = words.some((w) => {
         const norm = w.toLowerCase().trim()
         if (cleanChunk === norm) return true
-        if (norm.length > 3 && cleanChunk.startsWith(norm)) return true
-        if (norm === "äh" && ["äh", "ä", "ah", "aeh", "eh", "er", "öh"].includes(cleanChunk)) return true
-        if (norm === "ähm" && ["ähm", "em", "mm", "hm", "hmm", "öhm", "ehm"].includes(cleanChunk)) return true
+        if (norm === "äh" && matchesToken(cleanChunk, AH_VARIANTS)) return true
+        if (norm === "ähm" && matchesToken(cleanChunk, AHM_VARIANTS)) return true
+        if (FILLER_VARIANT_MAP[norm]) {
+          const entry = FILLER_VARIANT_MAP[norm]
+          return entry.some(seq => seq.length === 1 && matchesToken(cleanChunk, seq[0]))
+        }
+        if (norm.length > 3 && (cleanChunk.startsWith(norm) || norm.startsWith(cleanChunk))) return true
         return false
       })
 
@@ -4389,7 +4432,9 @@ function LiveStudio({
               </span>
             </div>
             <p className="transcript-text">
-              {liveTranscript || (
+              {liveTranscript ? (
+                renderHighlightedTranscript(liveTranscript)
+              ) : (
                 <span className="transcript-placeholder">
                   {isListening ? "🎙️ Spracherkennung lauscht... Sprich frei drauflos!" : "Klicke links auf „Starten“ und sprich ins Mikrofon."}
                 </span>
