@@ -3030,7 +3030,7 @@ ${advice.summary}
               <div className="feature-item">
                 <span className="feat-icon">🚀</span>
                 <div>
-                  <strong>In 2 Minuten eingerichtet</strong>
+                  <strong>In wenigen Minuten eingerichtet</strong>
                   <p>Einfach das GitHub-Repo klonen und mit Python / Docker oder systemd starten.</p>
                 </div>
               </div>
