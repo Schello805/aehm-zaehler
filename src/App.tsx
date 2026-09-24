@@ -237,7 +237,7 @@ export const AHM_VARIANTS: string[] = [
 ]
 
 export const AH_VARIANTS: string[] = [
-  "äh", "ä", "ah", "aeh", "eh", "öh", "oeh", "ähh", "ähhh", "ää", "äääh", "uh", "eeh", "ehh"
+  "äh", "ä", "ah", "aeh", "ähh", "ähhh", "ää", "äääh", "uh"
 ]
 
 export function matchesToken(curr: string, allowed: string[]): boolean {
