@@ -3,7 +3,7 @@ import type { HistoryEntry, Result } from '../App'
 
 interface RankingViewProps {
   history: HistoryEntry[]
-  onOpenAnalysis: (entry: HistoryEntry, autoStartSupercut?: boolean) => void
+  onOpenAnalysis: (entry: HistoryEntry) => void
   onGoToAnalysis: () => void
   onDeleteEntry?: (entryId: string) => void
 }
@@ -814,14 +814,6 @@ const LOCAL_LOCK_KEY = 'aehm_delete_lockout'
                     </button>
                     <button
                       type="button"
-                      className="podium-supercut-btn"
-                      onClick={() => onOpenAnalysis(topThree[0].entry, true)}
-                      title="Füllwort-Supercut dieses Rekords abspielen"
-                    >
-                      🎧 Supercut
-                    </button>
-                    <button
-                      type="button"
                       className="podium-delete-btn"
                       onClick={() => setDeleteModalItem({
                         id: topThree[0].entry.id,
@@ -1008,14 +1000,6 @@ const LOCAL_LOCK_KEY = 'aehm_delete_lockout'
                           title="Analyse im Detail ansehen"
                         >
                           🔍 Öffnen
-                        </button>
-                        <button
-                          type="button"
-                          className="ranking-btn-supercut"
-                          onClick={() => onOpenAnalysis(item.entry, true)}
-                          title="Füllwort-Supercut abspielen"
-                        >
-                          🎧 Supercut
                         </button>
                         <button
                           type="button"

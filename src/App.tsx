@@ -341,10 +341,8 @@ function App() {
   const [historySort, setHistorySort] = useState<'newest' | 'oldest' | 'words' | 'rate'>('newest')
   const [isCleaningAudio, setIsCleaningAudio] = useState(false)
   const [cleanAudioError, setCleanAudioError] = useState('')
-  const [isSupercutActive, setIsSupercutActive] = useState(false)
   const [ytPlayer, setYtPlayer] = useState<any>(null)
   const [activePlayTime, setActivePlayTime] = useState(0)
-  const [supercutCurrentIndex, setSupercutCurrentIndex] = useState(0)
 
   const [fetchedMediaInfo, setFetchedMediaInfo] = useState<{ title: string; duration: number; uploader?: string; directAudioUrl?: string } | null>(null)
   const [isFetchingMediaInfo, setIsFetchingMediaInfo] = useState(false)
@@ -795,12 +793,10 @@ function App() {
     if (direction === 'next') {
       const nextIndex = fillerOccurrences.findIndex((occ) => occ.start > currentTime + 0.2)
       const idx = nextIndex !== -1 ? nextIndex : fillerOccurrences.length - 1
-      setSupercutCurrentIndex(idx)
       seekAndPlay(Math.max(0, fillerOccurrences[idx].start - 0.12))
     } else {
       const prevOccs = fillerOccurrences.filter((occ) => occ.start < currentTime - 0.2)
       const idx = prevOccs.length ? fillerOccurrences.indexOf(prevOccs[prevOccs.length - 1]) : 0
-      setSupercutCurrentIndex(idx)
       seekAndPlay(Math.max(0, fillerOccurrences[idx].start - 0.12))
     }
   }
@@ -869,105 +865,6 @@ function App() {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [fillerOccurrences, pauseSegments, activePlayTime])
-
-  const pausePlayer = () => {
-    const player = ytPlayerRef.current || ytPlayer
-    if (player && typeof player.pauseVideo === 'function') {
-      try { player.pauseVideo() } catch {}
-    }
-    const iframe = document.getElementById('youtube-sync-iframe') as HTMLIFrameElement | null
-    if (iframe && iframe.contentWindow) {
-      try {
-        iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'pauseVideo', args: [] }), '*')
-      } catch {}
-    }
-    if (playbackRef.current) {
-      try { playbackRef.current.pause() } catch {}
-    }
-  }
-
-  useEffect(() => {
-    if (!isSupercutActive || !fillerOccurrences.length) return
-
-    let currentIndex = 0
-    let snippetTimer: any = null
-    let pollTimer: any = null
-    let isAdvancing = false
-    let lastSeekTime = 0
-
-    const playSnippet = (index: number) => {
-      if (index >= fillerOccurrences.length) {
-        setIsSupercutActive(false)
-        pausePlayer()
-        return
-      }
-
-      currentIndex = index
-      setSupercutCurrentIndex(index)
-      const occ = fillerOccurrences[index]
-      if (!occ) return
-
-      const startTime = Math.max(0, occ.start - 0.12)
-      const snippetDuration = Math.max(0.7, Math.min(2.5, (occ.end - occ.start) + 0.35))
-      lastSeekTime = Date.now()
-      seekAndPlay(startTime)
-
-      if (snippetTimer) clearTimeout(snippetTimer)
-
-      // Fallback timer: guarantees advancement if audio lags
-      snippetTimer = setTimeout(() => {
-        advanceNext()
-      }, snippetDuration * 1000)
-    }
-
-    const advanceNext = () => {
-      if (isAdvancing) return
-      isAdvancing = true
-      if (snippetTimer) clearTimeout(snippetTimer)
-
-      const nextIndex = currentIndex + 1
-      if (nextIndex < fillerOccurrences.length) {
-        setTimeout(() => {
-          isAdvancing = false
-          playSnippet(nextIndex)
-        }, 80)
-      } else {
-        setIsSupercutActive(false)
-        pausePlayer()
-      }
-    }
-
-    // Begin playback with the first filler
-    playSnippet(0)
-
-    // Watch real-time playback position
-    pollTimer = setInterval(() => {
-      // Ignore outdated player positions within 300ms of seeking
-      if (Date.now() - lastSeekTime < 300) return
-
-      let currentTime = 0
-      const player = ytPlayerRef.current || ytPlayer
-      if (player && typeof player.getCurrentTime === 'function') {
-        try { currentTime = player.getCurrentTime() || 0 } catch {}
-      } else if (playbackRef.current) {
-        currentTime = playbackRef.current.currentTime || 0
-      }
-
-      if (currentTime > 0) {
-        setActivePlayTime(currentTime)
-        const currentOcc = fillerOccurrences[currentIndex]
-        if (currentOcc && currentTime >= currentOcc.start && currentTime >= currentOcc.end + 0.12 && !isAdvancing) {
-          advanceNext()
-        }
-      }
-    }, 60)
-
-    return () => {
-      if (snippetTimer) clearTimeout(snippetTimer)
-      if (pollTimer) clearInterval(pollTimer)
-      pausePlayer()
-    }
-  }, [isSupercutActive, fillerOccurrences])
 
   const downloadCleanAudio = async () => {
     if (!result) return
@@ -1645,7 +1542,6 @@ ${advice.summary}
     setError('')
     setFetchedMediaInfo(null)
     setQueueInfo(null)
-    setIsSupercutActive(false)
     setProgress({ percent: 0, step: 0, label: '', remainingSeconds: null })
     try {
       if (window.location.search) {
@@ -2008,17 +1904,12 @@ ${advice.summary}
       ) : view === 'ranking' ? (
         <RankingView
           history={history}
-          onOpenAnalysis={(entry, autoStartSupercut) => {
+          onOpenAnalysis={(entry) => {
             setResult(ensureMultiSpeakerDiarization(entry.result, entry.words || words))
             setActiveHistoryId(entry.id)
             setUrl(entry.source.startsWith('http') ? entry.source : '')
             setFile(null)
             setView('analyse')
-            if (autoStartSupercut) {
-              setTimeout(() => {
-                setIsSupercutActive(true)
-              }, 400)
-            }
           }}
           onGoToAnalysis={() => setView('analyse')}
           onDeleteEntry={deleteHistoryEntry}
@@ -2833,32 +2724,11 @@ ${advice.summary}
                       )}
 
                       <div className="sniper-row-actions">
-                        <button
-                          type="button"
-                          className={isSupercutActive ? 'player-control-button supercut-btn active' : 'player-control-button supercut-btn'}
-                          onClick={() => {
-                            if (isSupercutActive) {
-                              setIsSupercutActive(false)
-                              pausePlayer()
-                            } else {
-                              setIsSupercutActive(true)
-                            }
-                          }}
-                          disabled={!fillerOccurrences.length}
-                        >
-                          🎧 {isSupercutActive ? 'Supercut beenden' : 'Füllwort-Supercut abspielen'}
-                        </button>
                         <div className="keyboard-shortcut-hint" title="Navigiere blitzschnell mit der Tastatur">
                           ⌨️ <kbd>Alt</kbd> + <kbd>←</kbd>/<kbd>→</kbd> Füllwörter · <kbd>Alt</kbd> + <kbd>↑</kbd>/<kbd>↓</kbd> Pausen
                         </div>
                       </div>
                     </div>
-
-                    {isSupercutActive && fillerOccurrences.length > 0 && (
-                      <div className="supercut-badge">
-                        ⚡ Supercut läuft: Füllwort {supercutCurrentIndex + 1} von {fillerOccurrences.length}
-                      </div>
-                    )}
                   </div>
 
                   {activeYoutubeId && (
