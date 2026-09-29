@@ -1,4 +1,4 @@
-const CACHE_NAME = 'aehm-zaehler-v3'
+const CACHE_NAME = 'aehm-zaehler-v4'
 const STATIC_ASSETS = [
   '/manifest.json',
   '/logo.png',
@@ -60,9 +60,13 @@ self.addEventListener('fetch', (event) => {
   // 4. Navigation / HTML: ALWAYS Network-First to guarantee newest asset hashes
   if (event.request.mode === 'navigate' || url.pathname === '/' || url.pathname.endsWith('.html')) {
     event.respondWith(
-      fetch(event.request)
-        .catch(() => caches.match('/index.html') || caches.match('/'))
-        .catch(() => new Response('Netzwerkfehler', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } }))
+      fetch(event.request).catch(async () => {
+        try {
+          const cached = (await caches.match('/index.html')) || (await caches.match('/'))
+          if (cached) return cached
+        } catch {}
+        return new Response('Netzwerkfehler', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
+      })
     )
     return
   }
