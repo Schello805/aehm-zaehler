@@ -113,8 +113,8 @@ const isValidHttpUrl = (urlString) => {
 
 // Result Cache for lightning-fast repeat requests
 const analysisResultCache = new Map()
-const MAX_CACHE_ENTRIES = 200
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000 // 24 hours
+const MAX_CACHE_ENTRIES = 500
+const CACHE_TTL_MS = 3 * 24 * 60 * 60 * 1000 // max. 3 Tage (72 Stunden)
 
 const getYouTubeVideoId = (url) => {
   if (!url) return null
@@ -1224,9 +1224,8 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
                   baseFillerWords,
                   totalWords,
                   relativeRate,
-                  partialText: currentText,
+                  partialText: currentText.slice(-300),
                   segment: seg,
-                  segments,
                 })
               } else if (data.type === 'done') {
                 const text = String(data.text || textParts.join(' '))

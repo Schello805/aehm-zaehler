@@ -1876,20 +1876,28 @@ ${advice.summary}
         }))
       }
 
-      if (data.text || (data.segments && data.segments.length > 0)) {
-        setResult({
-          text: data.text || data.partialText || '',
-          duration: data.duration || 0,
-          counts: data.counts || {},
-          fillerWords: data.fillerWords || 0,
-          baseFillerWords: data.baseFillerWords || 0,
-          totalWords: data.totalWords || 0,
-          relativeRate: data.relativeRate || 0,
-          segments: data.segments || [],
-          speakers: data.speakers,
-          mediaTitle: data.mediaTitle,
-          pauseCount: data.pauseCount,
-          totalPauseSeconds: data.totalPauseSeconds,
+      if (data.text || data.partialText || data.segment || (data.segments && data.segments.length > 0)) {
+        setResult((prev) => {
+          let nextSegments = prev?.segments ? [...prev.segments] : []
+          if (data.segment) {
+            nextSegments.push(data.segment)
+          } else if (Array.isArray(data.segments) && data.segments.length > 0) {
+            nextSegments = data.segments
+          }
+          return {
+            text: data.text || data.partialText || prev?.text || '',
+            duration: data.duration || prev?.duration || 0,
+            counts: data.counts || prev?.counts || {},
+            fillerWords: data.fillerWords ?? prev?.fillerWords ?? 0,
+            baseFillerWords: data.baseFillerWords ?? prev?.baseFillerWords ?? 0,
+            totalWords: data.totalWords ?? prev?.totalWords ?? 0,
+            relativeRate: data.relativeRate ?? prev?.relativeRate ?? 0,
+            segments: nextSegments,
+            speakers: data.speakers || prev?.speakers,
+            mediaTitle: data.mediaTitle || prev?.mediaTitle,
+            pauseCount: data.pauseCount || prev?.pauseCount,
+            totalPauseSeconds: data.totalPauseSeconds || prev?.totalPauseSeconds,
+          }
         })
       }
 

@@ -74,13 +74,19 @@ self.addEventListener('fetch', (event) => {
         .then((response) => {
           if (response && response.status === 200) {
             const copy = response.clone()
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy))
+            caches.open(CACHE_NAME)
+              .then((cache) => cache.put(event.request, copy))
+              .catch((err) => console.debug('[SW] Cache put skipped:', err))
           }
           return response
         })
         .catch(async () => {
-          const cached = await caches.match(event.request)
-          return cached || new Response('', { status: 404 })
+          try {
+            const cached = await caches.match(event.request)
+            return cached || new Response('', { status: 404 })
+          } catch {
+            return new Response('', { status: 404 })
+          }
         })
     )
     return
@@ -88,17 +94,21 @@ self.addEventListener('fetch', (event) => {
 
   // 6. Other local assets (images, icons): Cache-First with Network Fallback
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached
-      return fetch(event.request)
-        .then((response) => {
-          if (response && response.status === 200 && response.type === 'basic') {
-            const copy = response.clone()
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy))
-          }
-          return response
-        })
-        .catch(() => new Response('', { status: 404 }))
-    })
+    caches.match(event.request)
+      .then((cached) => {
+        if (cached) return cached
+        return fetch(event.request)
+          .then((response) => {
+            if (response && response.status === 200 && response.type === 'basic') {
+              const copy = response.clone()
+              caches.open(CACHE_NAME)
+                .then((cache) => cache.put(event.request, copy))
+                .catch((err) => console.debug('[SW] Cache put skipped:', err))
+            }
+            return response
+          })
+          .catch(() => new Response('', { status: 404 }))
+      })
+      .catch(() => fetch(event.request).catch(() => new Response('', { status: 404 })))
   )
 })
