@@ -1848,7 +1848,20 @@ ${advice.summary}
     let pollerInterval: any = null
 
     const handleProgressUpdate = (data: any) => {
-      if (isCompleted) return
+      if (isCompleted) {
+        console.log('[Analyze Update] Ignoriert, da Analyse bereits als abgeschlossen markiert ist.')
+        return
+      }
+      console.log('[Analyze Update]', {
+        stage: data.stage,
+        percent: data.percent,
+        currentTime: data.currentTime,
+        duration: data.duration,
+        fillerWords: data.fillerWords,
+        totalWords: data.totalWords,
+        status: data.status,
+        hasResult: Boolean(data.result),
+      })
 
       if (data.stage || data.message) {
         setProgress((prev) => ({
@@ -1955,16 +1968,20 @@ ${advice.summary}
         if (res.ok) {
           consecutivePollErrors = 0
           const statusData = await res.json()
+          console.log(`[Status Poll] status=${statusData.status}, percent=${statusData.percent}%, stage=${statusData.stage}, currentTime=${statusData.currentTime || 0}s, duration=${statusData.duration || 0}s, segments=${statusData.segments?.length || 0}`)
           if (statusData.status === 'running' || statusData.status === 'initializing') {
             handleProgressUpdate(statusData)
           } else if (statusData.status === 'complete') {
+            console.log('[Status Poll] 🎉 Status ist COMPLETE! Schließe Analyse ab...', statusData)
             handleProgressUpdate(statusData)
           } else if (statusData.status === 'error') {
+            console.error('[Status Poll] ❌ Status ist ERROR:', statusData.error)
             if (pollerInterval) clearInterval(pollerInterval)
             setError(statusData.error || 'Analyse fehlgeschlagen.')
             setIsAnalyzing(false)
           }
         } else {
+          console.warn(`[Status Poll] Server antwortete mit HTTP ${res.status}`)
           consecutivePollErrors += 1
           if (consecutivePollErrors > 15 && !isCompleted) {
             if (pollerInterval) clearInterval(pollerInterval)

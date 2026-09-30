@@ -762,6 +762,7 @@ app.get('/api/analyze-status/:id', (request, response) => {
   const id = request.params.id
   const job = activeJobs.get(id)
   if (!job) {
+    console.log(`[analyze-status] Job ${id} noch nicht in activeJobs -> initializing`)
     return response.json({
       id,
       status: 'initializing',
@@ -772,6 +773,12 @@ app.get('/api/analyze-status/:id', (request, response) => {
       counts: {},
     })
   }
+
+  if (!job._lastLog || Date.now() - job._lastLog > 10000 || job.status === 'complete' || job.status === 'error') {
+    job._lastLog = Date.now()
+    console.log(`[analyze-status] ${id} -> status=${job.status}, percent=${job.percent}%, currentTime=${job.currentTime || 0}s/${job.duration || 0}s, segments=${job.segments?.length || 0}`)
+  }
+
   const { childProcess: _unused, ...safeJob } = job
   return response.json(safeJob)
 })
@@ -977,9 +984,11 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
       jobState.result = data.result
       jobState.percent = 100
       jobState.message = 'Ergebnis fertig'
+      console.log(`[analyze] 🎉 jobState ${jobId} set to COMPLETE! percent=100`)
     } else if (data.type === 'error') {
       jobState.status = 'error'
       jobState.error = data.error
+      console.error(`[analyze] ❌ jobState ${jobId} set to ERROR:`, data.error)
     }
 
     if (response.writableEnded || isAborted) return
