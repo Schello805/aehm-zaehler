@@ -1986,8 +1986,8 @@ ${advice.summary}
       })
 
       if (!response.ok && !isCompleted) {
-        if (response.status === 502) {
-          console.warn('[Analyze] SSE stream received 502 from proxy — background status poller will continue tracking the job...')
+        if ([502, 503, 504, 524].includes(response.status)) {
+          console.warn(`[Analyze] SSE stream received ${response.status} from proxy/gateway — background status poller will continue tracking the job...`)
         } else {
           let errorMsg = `Server-Fehler (${response.status})`
           try {
