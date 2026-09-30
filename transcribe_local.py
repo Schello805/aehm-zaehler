@@ -1,5 +1,6 @@
 import gc
 import json
+import math
 import os
 import re
 import sys
@@ -8,6 +9,16 @@ from pathlib import Path
 import numpy as np
 from faster_whisper import WhisperModel
 from faster_whisper.audio import decode_audio
+
+
+def safe_float(val, default=0.0):
+    try:
+        f = float(val)
+        if math.isnan(f) or math.isinf(f):
+            return default
+        return f
+    except (TypeError, ValueError):
+        return default
 
 
 def estimate_segment_pitch(audio_segment: np.ndarray, sr: int = 16000) -> float:
@@ -118,13 +129,13 @@ def main() -> None:
             for w in segment.words:
                 w_str = w.word.strip()
                 w_clean = re.sub(r'^[^\w]+|[^\w]+$', '', w_str).lower()
-                prob = float(getattr(w, 'probability', 1.0))
+                prob = safe_float(getattr(w, 'probability', 1.0), 1.0)
                 # Filter low confidence hallucinations on ambiguous sound tokens (breath, mic bump, clicks)
                 if w_clean in {'äh', 'ähm', 'ehm', 'öh', 'hm'} and prob < 0.25:
                     continue
                 words_data.append({
-                    'start': round(float(w.start), 3),
-                    'end': round(float(w.end), 3),
+                    'start': round(safe_float(w.start), 3),
+                    'end': round(safe_float(w.end), 3),
                     'word': w_str,
                     'clean': w_clean,
                     'prob': round(prob, 2),
@@ -135,14 +146,14 @@ def main() -> None:
         text_parts.append(cleaned_text)
 
         s_obj = {
-            'start': round(float(segment.start), 3),
-            'end': round(float(segment.end), 3),
+            'start': round(safe_float(segment.start), 3),
+            'end': round(safe_float(segment.end), 3),
             'text': cleaned_text,
-            'pitch': round(pitch, 1),
+            'pitch': round(safe_float(pitch), 1),
             'words': words_data,
         }
         segment_data.append(s_obj)
-        sys.stdout.write(json.dumps({'type': 'segment', 'segment': s_obj}, ensure_ascii=False) + '\n')
+        sys.stdout.write(json.dumps({'type': 'segment', 'segment': s_obj}, ensure_ascii=False, allow_nan=False) + '\n')
         sys.stdout.flush()
 
         if len(segment_data) % 40 == 0:
@@ -152,10 +163,10 @@ def main() -> None:
     data = {
         'type': 'done',
         'text': text,
-        'duration': info.duration,
+        'duration': safe_float(info.duration),
         'segments': segment_data,
     }
-    sys.stdout.write(json.dumps(data, ensure_ascii=False) + '\n')
+    sys.stdout.write(json.dumps(data, ensure_ascii=False, allow_nan=False) + '\n')
     sys.stdout.flush()
 
 

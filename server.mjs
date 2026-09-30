@@ -755,6 +755,10 @@ app.get('/api/health', (request, response) => {
 })
 
 app.get('/api/analyze-status/:id', (request, response) => {
+  response.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+  response.setHeader('Pragma', 'no-cache')
+  response.setHeader('Expires', '0')
+
   const id = request.params.id
   const job = activeJobs.get(id)
   if (!job) {
@@ -768,7 +772,8 @@ app.get('/api/analyze-status/:id', (request, response) => {
       counts: {},
     })
   }
-  return response.json(job)
+  const { childProcess: _unused, ...safeJob } = job
+  return response.json(safeJob)
 })
 
 app.get('/api/audio-stream/:id', async (request, response) => {
@@ -1169,121 +1174,141 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
         } catch {}
         jobState.childProcess = childProcess
 
+        let isFinalized = false
+
+        const finalizeAnalysis = (doneData = null) => {
+          if (isFinalized) return
+          isFinalized = true
+
+          const text = String((doneData && doneData.text) || textParts.join(' '))
+          const finalDuration = Number((doneData && doneData.duration) || duration || jobState.duration || 0)
+          const counts = Object.fromEntries(words.map((word) => [word, countWordOccurrences(text, word)]))
+          const fillerWords = Object.values(counts).reduce((sum, count) => sum + count, 0)
+          const phraseOverlap = getPhraseOverlap(words, counts)
+          const baseFillerWords = Math.max(0, fillerWords - phraseOverlap)
+          const totalWords = text.trim() ? text.trim().split(/\s+/).length : 0
+          const relativeRate = totalWords ? baseFillerWords / totalWords : 0
+          const rawSegments = doneData && Array.isArray(doneData.segments) && doneData.segments.length > 0 ? doneData.segments : segments
+
+          // Perform speaker diarization, name extraction, pauses and WPM
+          const { segments: finalSegments, speakers } = performSpeakerDiarization(rawSegments, words)
+
+          let pauseCount = 0
+          let totalPauseSeconds = 0
+          for (let idx = 1; idx < finalSegments.length; idx++) {
+            const prevEnd = Number(finalSegments[idx - 1].end || 0)
+            const segStart = Number(finalSegments[idx].start || 0)
+            const gap = segStart - prevEnd
+            if (gap >= 1.2) {
+              pauseCount += 1
+              totalPauseSeconds += gap
+            }
+          }
+
+          console.log('[analyze] Complete! Total words:', totalWords, 'Fillers:', fillerWords, 'Segments:', finalSegments.length, 'Speakers:', Object.keys(speakers).length, 'Pauses:', pauseCount)
+          const completeResult = {
+            text,
+            duration: finalDuration,
+            counts,
+            fillerWords,
+            baseFillerWords,
+            totalWords,
+            relativeRate,
+            segments: finalSegments,
+            speakers,
+            pauseCount,
+            totalPauseSeconds: Math.round(totalPauseSeconds * 10) / 10,
+            mediaTitle: mediaTitle || (file ? file.originalname : ''),
+            directAudioUrl: metadataInfo?.directAudioUrl || '',
+            audioUrl: metadataInfo?.directAudioUrl || `/api/audio-stream/${jobId}`,
+          }
+
+          // Cache completed result for fast repeat requests
+          if (request.body.url) {
+            saveToCache(request.body.url, words, completeResult)
+          }
+
+          sendEvent({
+            type: 'complete',
+            result: completeResult,
+          })
+        }
+
+        const processLine = (line) => {
+          const trimmed = line.trim()
+          if (!trimmed) return
+          try {
+            const data = JSON.parse(trimmed)
+            if (data.type === 'info') {
+              duration = Number(data.duration || 0)
+              sendEvent({
+                type: 'progress',
+                percent: 2,
+                currentTime: 0,
+                duration,
+                counts: Object.fromEntries(words.map((w) => [w, 0])),
+                fillerWords: 0,
+                baseFillerWords: 0,
+                totalWords: 0,
+                relativeRate: 0,
+                partialText: '',
+                segments: [],
+              })
+            } else if (data.type === 'segment' && data.segment) {
+              const seg = {
+                start: Number(data.segment.start || 0),
+                end: Number(data.segment.end || 0),
+                text: String(data.segment.text || ''),
+                counts: countSegmentWords(String(data.segment.text || ''), words),
+              }
+              segments.push(seg)
+              textParts.push(seg.text)
+              console.log('[analyze] Segment (', seg.start.toFixed(1), 's -', seg.end.toFixed(1), 's):', seg.text)
+
+              const currentText = textParts.join(' ')
+              const counts = Object.fromEntries(words.map((word) => [word, countWordOccurrences(currentText, word)]))
+              const fillerWords = Object.values(counts).reduce((sum, count) => sum + count, 0)
+              const phraseOverlap = getPhraseOverlap(words, counts)
+              const baseFillerWords = Math.max(0, fillerWords - phraseOverlap)
+              const totalWords = currentText.trim() ? currentText.trim().split(/\s+/).length : 0
+              const relativeRate = totalWords ? baseFillerWords / totalWords : 0
+              const percent = duration > 0 ? Math.min(99, Math.max(5, Math.round((seg.end / duration) * 100))) : 50
+
+              sendEvent({
+                type: 'progress',
+                percent,
+                currentTime: seg.end,
+                duration,
+                counts,
+                fillerWords,
+                baseFillerWords,
+                totalWords,
+                relativeRate,
+                partialText: currentText.slice(-300),
+                segment: seg,
+              })
+            } else if (data.type === 'done') {
+              finalizeAnalysis(data)
+            }
+          } catch (err) {
+            console.warn('[analyze] Failed to parse line from python:', line.slice(0, 200), err)
+          }
+        }
+
         childProcess.stdout.on('data', (chunk) => {
           stdoutBuffer += chunk.toString()
           const lines = stdoutBuffer.split('\n')
           stdoutBuffer = lines.pop() || ''
 
           for (const line of lines) {
-            const trimmed = line.trim()
-            if (!trimmed) continue
-            try {
-              const data = JSON.parse(trimmed)
-              if (data.type === 'info') {
-                duration = Number(data.duration || 0)
-                sendEvent({
-                  type: 'progress',
-                  percent: 2,
-                  currentTime: 0,
-                  duration,
-                  counts: Object.fromEntries(words.map((w) => [w, 0])),
-                  fillerWords: 0,
-                  baseFillerWords: 0,
-                  totalWords: 0,
-                  relativeRate: 0,
-                  partialText: '',
-                  segments: [],
-                })
-              } else if (data.type === 'segment' && data.segment) {
-                const seg = {
-                  start: Number(data.segment.start || 0),
-                  end: Number(data.segment.end || 0),
-                  text: String(data.segment.text || ''),
-                  counts: countSegmentWords(String(data.segment.text || ''), words),
-                }
-                segments.push(seg)
-                textParts.push(seg.text)
-                console.log('[analyze] Segment (', seg.start.toFixed(1), 's -', seg.end.toFixed(1), 's):', seg.text)
+            processLine(line)
+          }
+        })
 
-                const currentText = textParts.join(' ')
-                const counts = Object.fromEntries(words.map((word) => [word, countWordOccurrences(currentText, word)]))
-                const fillerWords = Object.values(counts).reduce((sum, count) => sum + count, 0)
-                const phraseOverlap = getPhraseOverlap(words, counts)
-                const baseFillerWords = Math.max(0, fillerWords - phraseOverlap)
-                const totalWords = currentText.trim() ? currentText.trim().split(/\s+/).length : 0
-                const relativeRate = totalWords ? baseFillerWords / totalWords : 0
-                const percent = duration > 0 ? Math.min(99, Math.max(5, Math.round((seg.end / duration) * 100))) : 50
-
-                sendEvent({
-                  type: 'progress',
-                  percent,
-                  currentTime: seg.end,
-                  duration,
-                  counts,
-                  fillerWords,
-                  baseFillerWords,
-                  totalWords,
-                  relativeRate,
-                  partialText: currentText.slice(-300),
-                  segment: seg,
-                })
-              } else if (data.type === 'done') {
-                const text = String(data.text || textParts.join(' '))
-                const finalDuration = Number(data.duration || duration)
-                const counts = Object.fromEntries(words.map((word) => [word, countWordOccurrences(text, word)]))
-                const fillerWords = Object.values(counts).reduce((sum, count) => sum + count, 0)
-                const phraseOverlap = getPhraseOverlap(words, counts)
-                const baseFillerWords = Math.max(0, fillerWords - phraseOverlap)
-                const totalWords = text.trim() ? text.trim().split(/\s+/).length : 0
-                const relativeRate = totalWords ? baseFillerWords / totalWords : 0
-                const rawSegments = Array.isArray(data.segments) && data.segments.length > 0 ? data.segments : segments
-
-                // Perform speaker diarization, name extraction, pauses and WPM
-                const { segments: finalSegments, speakers } = performSpeakerDiarization(rawSegments, words)
-
-                let pauseCount = 0
-                let totalPauseSeconds = 0
-                for (let idx = 1; idx < finalSegments.length; idx++) {
-                  const prevEnd = Number(finalSegments[idx - 1].end || 0)
-                  const segStart = Number(finalSegments[idx].start || 0)
-                  const gap = segStart - prevEnd
-                  if (gap >= 1.2) {
-                    pauseCount += 1
-                    totalPauseSeconds += gap
-                  }
-                }
-
-                console.log('[analyze] Complete! Total words:', totalWords, 'Fillers:', fillerWords, 'Segments:', finalSegments.length, 'Speakers:', Object.keys(speakers).length, 'Pauses:', pauseCount)
-                const completeResult = {
-                  text,
-                  duration: finalDuration,
-                  counts,
-                  fillerWords,
-                  baseFillerWords,
-                  totalWords,
-                  relativeRate,
-                  segments: finalSegments,
-                  speakers,
-                  pauseCount,
-                  totalPauseSeconds: Math.round(totalPauseSeconds * 10) / 10,
-                  mediaTitle: mediaTitle || (file ? file.originalname : ''),
-                  directAudioUrl: metadataInfo?.directAudioUrl || '',
-                  audioUrl: metadataInfo?.directAudioUrl || `/api/audio-stream/${jobId}`,
-                }
-
-                // Cache completed result for fast repeat requests
-                if (request.body.url) {
-                  saveToCache(request.body.url, words, completeResult)
-                }
-
-                sendEvent({
-                  type: 'complete',
-                  result: completeResult,
-                })
-              }
-            } catch (err) {
-              console.warn('[analyze] Failed to parse line from python:', line, err)
-            }
+        childProcess.stdout.on('end', () => {
+          if (stdoutBuffer.trim()) {
+            processLine(stdoutBuffer)
+            stdoutBuffer = ''
           }
         })
 
@@ -1298,9 +1323,19 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
 
         childProcess.on('close', (code) => {
           console.log('[analyze] Python process exited with code:', code)
+          if (stdoutBuffer.trim()) {
+            processLine(stdoutBuffer)
+            stdoutBuffer = ''
+          }
+
           if (code !== 0 && !isAborted) {
             reject(new Error(`Whisper-Transkription fehlgeschlagen (Code ${code}): ${stderrBuffer.slice(-500)}`))
           } else {
+            // Guaranteed fallback: If python completed with code 0 but finalizeAnalysis was not called yet, finalize now
+            if (!isFinalized && !isAborted) {
+              console.log('[analyze] Python process completed successfully (code 0), finalizing analysis fallback with', segments.length, 'segments')
+              finalizeAnalysis()
+            }
             resolve()
           }
         })
