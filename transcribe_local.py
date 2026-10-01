@@ -96,7 +96,6 @@ def main() -> None:
     model = WhisperModel(model_name, device='cpu', compute_type='int8', cpu_threads=threads)
     segments, info = model.transcribe(
         str(input_path),
-        language='de',
         beam_size=1,
         best_of=1,
         vad_filter=True,

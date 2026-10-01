@@ -1045,6 +1045,8 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
 
       let file = request.file
       let mediaTitle = request.body.title ? String(request.body.title).trim() : ''
+      let metadataInfo = null
+      
       if (file && !mediaTitle) {
         mediaTitle = file.originalname
       }
@@ -1053,7 +1055,6 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
         console.log('[analyze] Downloading from URL:', request.body.url)
         sendEvent({ type: 'status', stage: 'download', message: 'Lade Video / Podcast / Audio herunter...' })
 
-        let metadataInfo = null
         try {
           metadataInfo = await getUrlMetadata(request.body.url)
           if (metadataInfo?.title && !mediaTitle) {
