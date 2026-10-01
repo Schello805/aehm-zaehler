@@ -93,14 +93,8 @@ def main() -> None:
     threads = max(1, min(raw_threads, os.cpu_count() or 2))
     sys.stderr.write(f'Whisper Inferenz-Konfiguration: Modell={model_name}, CPU-Kerne={threads}\n')
 
-    from faster_whisper import WhisperModel, BatchedInferencePipeline
-    
-    model = WhisperModel(model_name, device='cpu', compute_type='int8', cpu_threads=threads)
-    batched_model = BatchedInferencePipeline(model=model)
-    
-    segments, info = batched_model.transcribe(
+    segments, info = model.transcribe(
         str(input_path),
-        batch_size=8,
         beam_size=1,
         best_of=1,
         vad_filter=True,
