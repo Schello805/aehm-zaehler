@@ -109,7 +109,7 @@ const DEMO_BENCHMARKS: MediaRankingItem[] = [
       tags: ['Podcast', 'Demo'],
       words: ['äh', 'ähm', 'quasi', 'sozusagen'],
       result: {
-        text: 'In dieser Folge sprechen wir über autonome Coding-Agenten und Füllwörter.',
+        text: 'In dieser Folge spreche ich über autonome Coding-Agenten und Füllwörter.',
         fillerWords: 94,
         baseFillerWords: 94,
         totalWords: 3840,

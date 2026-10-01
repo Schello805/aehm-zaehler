@@ -88,28 +88,28 @@ export function LegalModal({ tab, setTab, onClose }: LegalModalProps) {
                   <a href="https://ec.europa.eu/consumers/odr/" target="_blank" rel="noopener noreferrer">
                     https://ec.europa.eu/consumers/odr/
                   </a>.<br />
-                  Unsere E-Mail-Adresse finden Sie oben im Impressum.
+                  Meine E-Mail-Adresse finden Sie oben im Impressum.
                 </p>
               </section>
 
               <section className="legal-section">
                 <h3>Verbraucherstreitbeilegung / Universalschlichtungsstelle</h3>
                 <p>
-                  Wir sind nicht bereit oder verpflichtet, an Streitbeilegungsverfahren vor einer Verbraucherschlichtungsstelle teilzunehmen.
+                  Ich bin nicht bereit oder verpflichtet, an Streitbeilegungsverfahren vor einer Verbraucherschlichtungsstelle teilzunehmen.
                 </p>
               </section>
 
               <section className="legal-section">
                 <h3>Haftung für Inhalte</h3>
                 <p>
-                  Als Diensteanbieter sind wir gemäß § 7 Abs. 1 DDG für eigene Inhalte auf diesen Seiten nach den allgemeinen Gesetzen verantwortlich. Nach §§ 8 bis 10 DDG sind wir als Diensteanbieter jedoch nicht verpflichtet, übermittelte oder gespeicherte fremde Informationen zu überwachen oder nach Umständen zu forschen, die auf eine rechtswidrige Tätigkeit hinweisen. Verpflichtungen zur Entfernung oder Sperrung der Nutzung von Informationen nach den allgemeinen Gesetzen bleiben hiervon unberührt.
+                  Als Diensteanbieter sind ich gemäß § 7 Abs. 1 DDG für eigene Inhalte auf diesen Seiten nach den allgemeinen Gesetzen verantwortlich. Nach §§ 8 bis 10 DDG sind ich als Diensteanbieter jedoch nicht verpflichtet, übermittelte oder gespeicherte fremde Informationen zu überwachen oder nach Umständen zu forschen, die auf eine rechtswidrige Tätigkeit hinweisen. Verpflichtungen zur Entfernung oder Sperrung der Nutzung von Informationen nach den allgemeinen Gesetzen bleiben hiervon unberührt.
                 </p>
               </section>
 
               <section className="legal-section">
                 <h3>Haftung für Links</h3>
                 <p>
-                  Unser Angebot enthält Links zu externen Websites Dritter (z. B. YouTube, Spotify), auf deren Inhalte wir keinen Einfluss haben. Deshalb können wir für diese fremden Inhalte auch keine Gewähr übernehmen. Für die Inhalte der verlinkten Seiten ist stets der jeweilige Anbieter oder Betreiber der Seiten verantwortlich.
+                  Mein Angebot enthält Links zu externen Websites Dritter (z. B. YouTube, Spotify), auf deren Inhalte ich keinen Einfluss haben. Deshalb können ich für diese fremden Inhalte auch keine Gewähr übernehmen. Für die Inhalte der verlinkten Seiten ist stets der jeweilige Anbieter oder Betreiber der Seiten verantwortlich.
                 </p>
               </section>
 
@@ -128,7 +128,7 @@ export function LegalModal({ tab, setTab, onClose }: LegalModalProps) {
               <section className="legal-section">
                 <h3>1. Datenschutz auf einen Blick</h3>
                 <p>
-                  Wir freuen uns über Ihr Interesse an unserer Anwendung <strong>ähm-zähler</strong>. Der Schutz Ihrer persönlichen Daten ist uns ein wichtiges Anliegen. Nachfolgend informieren wir Sie über Art, Umfang und Zweck der Erhebung und Verwendung Ihrer Daten bei der Nutzung unserer Dienste.
+                  Ich freue mich über Ihr Interesse an meiner Anwendung <strong>ähm-zähler</strong>. Der Schutz Ihrer persönlichen Daten ist mich ein wichtiges Anliegen. Nachfolgend informieren ich Sie über Art, Umfang und Zweck der Erhebung und Verwendung Ihrer Daten bei der Nutzung meiner Dienste.
                 </p>
               </section>
 
@@ -150,7 +150,7 @@ export function LegalModal({ tab, setTab, onClose }: LegalModalProps) {
                   <strong>Zweck der Verarbeitung:</strong> Der Kerndienst dieser Web-App dient der automatischen Erkennung, Zählung und zeitlichen Markierung von Füllwörtern (wie „äh“, „ähm“, „quasi“, „sozusagen“) sowie der Erstellung von Transkripten und Sprechfluss-Statistiken.
                 </p>
                 <p>
-                  <strong>Verarbeitung bei Datei-Uploads & Medien-Links:</strong> Wenn Sie eine Audiodatei hochladen oder eine URL (z. B. YouTube oder Spotify) zur Analyse eingeben, wird die Tonspur auf unserem Server ausschließlich zur KI-basierten Spracherkennung (Whisper) verarbeitet. Nach Abschluss der Transkription und Auswertung werden sämtliche Zwischendateien im temporären Verzeichnis des Servers automatisch gelöscht.
+                  <strong>Verarbeitung bei Datei-Uploads & Medien-Links:</strong> Wenn Sie eine Audiodatei hochladen oder eine URL (z. B. YouTube oder Spotify) zur Analyse eingeben, wird die Tonspur auf meinem Server ausschließlich zur KI-basierten Spracherkennung (Whisper) verarbeitet. Nach Abschluss der Transkription und Auswertung werden sämtliche Zwischendateien im temporären Verzeichnis des Servers automatisch gelöscht.
                 </p>
                 <p>
                   <strong>Kein KI-Training & Keine Weitergabe:</strong> Ihre Audioaufnahmen, Transkripte und Auswertungen werden <u>zu keinem Zeitpunkt</u> zum Trainieren von KI-Modellen verwendet und niemals an Werbetreibende oder unbefugte Dritte weitergegeben oder verkauft.
@@ -181,7 +181,7 @@ export function LegalModal({ tab, setTab, onClose }: LegalModalProps) {
                   Diese Website verwendet <strong>keine Werbe-Cookies</strong>, keine Marketing-Pixel und keine Werbenetzwerke (wie Google Ads oder Meta).
                 </p>
                 <p>
-                  Zur Gewährleistung der Grundfunktionen nutzen wir den lokalen Speicher Ihres Browsers (<code>localStorage</code> gemäß Art. 6 Abs. 1 lit. f DSGVO):
+                  Zur Gewährleistung der Grundfunktionen nutze ich den lokalen Speicher Ihres Browsers (<code>localStorage</code> gemäß Art. 6 Abs. 1 lit. f DSGVO):
                 </p>
                 <ul>
                   <li>Speicherung Ihres bevorzugten Farbschemas (Dark Mode / Light Mode)</li>
@@ -193,10 +193,10 @@ export function LegalModal({ tab, setTab, onClose }: LegalModalProps) {
               <section className="legal-section">
                 <h3>6. Web-Analyse mit selbst gehostetem Matomo</h3>
                 <p>
-                  Wir nutzen auf dieser Website die datenschutzfreundliche Open-Source-Software <strong>Matomo</strong> zur statistischen Reichweitenmessung und kontinuierlichen Verbesserung unserer Webanwendung.
+                  Ich nutze auf dieser Website die datenschutzfreundliche Open-Source-Software <strong>Matomo</strong> zur statistischen Reichweitenmessung und kontinuierlichen Verbesserung meiner Webanwendung.
                 </p>
                 <p>
-                  <strong>Selbst gehostet auf eigenem Server:</strong> Die Software wird vollständig auf unserer eigenen Serverinfrastruktur (<code>https://analytics.schellenberger.biz/</code>) betrieben. Es findet <u>keine Übermittlung</u> an Dritte oder externe Cloud-Dienste statt. Sämtliche Analysedaten verbleiben vollständig in unserer Kontrolle.
+                  <strong>Selbst gehostet auf eigenem Server:</strong> Die Software wird vollständig auf meiner eigenen Serverinfrastruktur (<code>https://analytics.schellenberger.biz/</code>) betrieben. Es findet <u>keine Übermittlung</u> an Dritte oder externe Cloud-Dienste statt. Sämtliche Analysedaten verbleiben vollständig in meiner Kontrolle.
                 </p>
                 <p>
                   <strong>IP-Anonymisierung:</strong> Vor der Speicherung wird Ihre IP-Adresse durch Maskierung der letzten Oktette anonymisiert, sodass kein Personenbezug herstellbar ist.
@@ -212,7 +212,7 @@ export function LegalModal({ tab, setTab, onClose }: LegalModalProps) {
               <section className="legal-section">
                 <h3>7. Server-Log-Dateien</h3>
                 <p>
-                  Der Provider dieser Website erhebt und speichert automatisch Daten in sogenannten Server-Log-Dateien, die Ihr Browser automatisch an uns übermittelt:
+                  Der Provider dieser Website erhebt und speichert automatisch Daten in sogenannten Server-Log-Dateien, die Ihr Browser automatisch an mich übermittelt:
                 </p>
                 <ul>
                   <li>Browsertyp und Browserversion</li>
@@ -222,14 +222,14 @@ export function LegalModal({ tab, setTab, onClose }: LegalModalProps) {
                   <li>Datum und Uhrzeit der Serveranfrage</li>
                 </ul>
                 <p>
-                  Rechtsgrundlage ist Art. 6 Abs. 1 lit. f DSGVO. Unser berechtigtes Interesse liegt in der Gewährleistung eines sicheren, stabilen und fehlerfreien Betriebs unseres Dienstes. Eine Zusammenführung dieser Daten mit anderen Datenquellen wird nicht vorgenommen.
+                  Rechtsgrundlage ist Art. 6 Abs. 1 lit. f DSGVO. Mein berechtigtes Interesse liegt in der Gewährleistung eines sicheren, stabilen und fehlerfreien Betriebs meines Dienstes. Eine Zusammenführung dieser Daten mit anderen Datenquellen wird nicht vorgenommen.
                 </p>
               </section>
 
               <section className="legal-section">
                 <h3>8. Externe Schnittstellen (Spotify & YouTube)</h3>
                 <p>
-                  Wenn Sie freiwillig Links zu Spotify-Podcasts oder YouTube-Videos zur Analyse übermitteln, ruft unser Server öffentlich verfügbare Metadaten (Titel, Dauer, Bild-Vorschau) über die offiziellen Schnittstellen (Spotify Web API bzw. oEmbed/yt-dlp) ab, um das Ergebnis darzustellen.
+                  Wenn Sie freiwillig Links zu Spotify-Podcasts oder YouTube-Videos zur Analyse übermitteln, ruft mein Server öffentlich verfügbare Metadaten (Titel, Dauer, Bild-Vorschau) über die offiziellen Schnittstellen (Spotify Web API bzw. oEmbed/yt-dlp) ab, um das Ergebnis darzustellen.
                 </p>
               </section>
 
@@ -239,7 +239,7 @@ export function LegalModal({ tab, setTab, onClose }: LegalModalProps) {
                   Sie haben nach der Datenschutz-Grundverordnung (DSGVO) folgende Rechte gegenüber der verantwortlichen Stelle:
                 </p>
                 <ul>
-                  <li><strong>Auskunftsrecht (Art. 15 DSGVO):</strong> Sie können Auskunft über Ihre von uns verarbeiteten personenbezogenen Daten verlangen.</li>
+                  <li><strong>Auskunftsrecht (Art. 15 DSGVO):</strong> Sie können Auskunft über Ihre von mir verarbeiteten personenbezogenen Daten verlangen.</li>
                   <li><strong>Recht auf Berichtigung (Art. 16 DSGVO):</strong> Sie haben das Recht auf Berichtigung unrichtiger Daten.</li>
                   <li><strong>Recht auf Löschung (Art. 17 DSGVO):</strong> Sie können die unverzügliche Löschung Ihrer Daten verlangen.</li>
                   <li><strong>Recht auf Einschränkung der Verarbeitung (Art. 18 DSGVO):</strong> Sie können die Einschränkung der Verarbeitung Ihrer Daten verlangen.</li>
@@ -255,7 +255,7 @@ export function LegalModal({ tab, setTab, onClose }: LegalModalProps) {
               <section className="legal-section">
                 <h3>9. Beschwerderecht bei der Aufsichtsbehörde</h3>
                 <p>
-                  Im Falle datenschutzrechtlicher Verstöße steht Ihnen ein Beschwerderecht bei einer zuständigen Datenschutzaufsichtsbehörde zu. Die für uns zuständige Landesdatenschutzbehörde ist:
+                  Im Falle datenschutzrechtlicher Verstöße steht Ihnen ein Beschwerderecht bei einer zuständigen Datenschutzaufsichtsbehörde zu. Die für mich zuständige Landesdatenschutzbehörde ist:
                 </p>
                 <p>
                   <strong>Bayerisches Landesamt für Datenschutzaufsicht (BayLDA)</strong><br />

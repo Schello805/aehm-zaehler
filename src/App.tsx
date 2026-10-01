@@ -130,7 +130,7 @@ const ensureMultiSpeakerDiarization = (resultData: Result, wordsList: string[]):
   }
 
   const turnMarkers = [
-    /^(?:ja|nein|genau|stimmt|absolut|danke|vielen dank|hallo|guten tag|guten morgen|guten abend|servus|moin|auf jeden fall|interessant|frage|was meinst du|wie siehst du|ich glaube|wir haben|übergebe|herzlich willkommen|schönen guten|okay|alles klar|richtig)/i,
+    /^(?:ja|nein|genau|stimmt|absolut|danke|vielen dank|hallo|guten tag|guten morgen|guten abend|servus|moin|auf jeden fall|interessant|frage|was meinst du|wie siehst du|ich glaube|ich habe|übergebe|herzlich willkommen|schönen guten|okay|alles klar|richtig)/i,
     /(?:\?|\!)$/
   ]
 
@@ -2280,7 +2280,7 @@ ${advice.summary}
           <section className="intro">
             <p className="eyebrow">SPRECHFLUSS SICHTBAR MACHEN</p>
             <h1>Wie oft sagst du<br /><em>„äh“?</em></h1>
-            <p className="intro-copy">Lade eine Aufnahme hoch oder füge einen Link ein. Wir finden deine Füllwörter in wenigen Sekunden.</p>
+            <p className="intro-copy">Lade eine Aufnahme hoch oder füge einen Link ein. Die KI findet deine Füllwörter in wenigen Sekunden.</p>
           </section>
 
           <section className="workspace">
@@ -2381,7 +2381,7 @@ ${advice.summary}
 
               {((fileDuration && fileDuration > 3600) || (fetchedMediaInfo?.duration && fetchedMediaInfo.duration > 3600)) && (
                 <div className="warning-callout" style={{ padding: '1rem', backgroundColor: 'var(--card-bg-light)', borderLeft: '4px solid #f59e0b', borderRadius: '4px', marginBottom: '1.5rem', fontSize: '0.95rem' }}>
-                  <strong>Hinweis bei langen Videos:</strong> Dateien über 1 Stunde können lange dauern. Wir haben einen Bug behoben, der das Video bisher abbrechen ließ, aber die Dauer der Analyse kann dennoch erheblich sein.
+                  <strong>Hinweis bei langen Videos:</strong> Dateien über 1 Stunde können lange dauern. Ich habe einen Bug behoben, der das Video bisher abbrechen ließ, aber die Dauer der Analyse kann dennoch erheblich sein.
                 </div>
               )}
 

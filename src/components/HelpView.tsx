@@ -38,7 +38,7 @@ export const HelpView: React.FC<HelpViewProps> = ({
       question: 'Welches KI-Modell nutzt die App und warum ist es so schnell?',
       answer: (
         <p>
-          Wir setzen auf <strong>faster-whisper</strong>, eine hochoptimierte Re-Implementierung der <strong>OpenAI Whisper</strong>-Architektur mit der <strong>CTranslate2</strong>-Inferenz-Engine und <strong>int8-Quantisierung</strong>. Dadurch läuft die Spracherkennung bis zu 4-mal schneller als herkömmliche Sprachmodelle bei minimalem Speicherbedarf – direkt auf dem CPU-Server oder sogar auf einem Raspberry Pi 5, ohne teure Cloud-Grafikkarten.
+          Ich setze auf <strong>faster-whisper</strong>, eine hochoptimierte Re-Implementierung der <strong>OpenAI Whisper</strong>-Architektur mit der <strong>CTranslate2</strong>-Inferenz-Engine und <strong>int8-Quantisierung</strong>. Dadurch läuft die Spracherkennung bis zu 4-mal schneller als herkömmliche Sprachmodelle bei minimalem Speicherbedarf – direkt auf dem CPU-Server oder sogar auf einem Raspberry Pi 5, ohne teure Cloud-Grafikkarten.
         </p>
       ),
     },
@@ -252,7 +252,7 @@ export const HelpView: React.FC<HelpViewProps> = ({
             <div className="pipeline-content">
               <h4>Wörtlicher Inferenz-Prompt & Hotword-Injektion</h4>
               <p>
-                Damit Whisper Füllwörter nicht „wegglättet“ (wie es herkömmliche Diktier-Apps tun), erzwingt unser System über einen wörtlichen Initial-Prompt und Hotwords (<code>äh, ehm, ähm, öh, hm</code>), dass auch kleinste Zögerungen niedergeschrieben werden.
+                Damit Whisper Füllwörter nicht „wegglättet“ (wie es herkömmliche Diktier-Apps tun), erzwingt mein System über einen wörtlichen Initial-Prompt und Hotwords (<code>äh, ehm, ähm, öh, hm</code>), dass auch kleinste Zögerungen niedergeschrieben werden.
               </p>
             </div>
           </div>
