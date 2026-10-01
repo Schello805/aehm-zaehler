@@ -1,4 +1,5 @@
 import express from 'express'
+import rateLimit from 'express-rate-limit'
 import multer from 'multer'
 import { create as createYoutubeDl } from 'youtube-dl-exec'
 import { mkdtemp, readFile, readdir, rm, writeFile, stat } from 'node:fs/promises'
@@ -904,7 +905,15 @@ app.post('/api/analyze-cancel/:id', (request, response) => {
   return response.json({ ok: true })
 })
 
-app.post('/api/analyze', upload.single('file'), async (request, response) => {
+const analyzeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // Limit each IP to 10 analyze requests per windowMs
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Zu viele Analysen gestartet. Bitte warte einige Minuten, bevor du weitere Videos hochlädst oder verlinkst.' },
+})
+
+app.post('/api/analyze', analyzeLimiter, upload.single('file'), async (request, response) => {
   request.body = request.body || {}
   let temporaryDirectory
   let childProcess = null
