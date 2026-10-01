@@ -2066,7 +2066,10 @@ ${advice.summary}
               handleProgressUpdate(event)
             } else if (event.type === 'error') {
               setQueueInfo(null)
-              throw new Error(event.error || 'Analyse fehlgeschlagen.')
+              if (pollerInterval) clearInterval(pollerInterval)
+              setError(event.error || 'Analyse fehlgeschlagen.')
+              setIsAnalyzing(false)
+              return
             }
           }
         }
