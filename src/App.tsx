@@ -2083,6 +2083,7 @@ ${advice.summary}
             } else if (event.type === 'error') {
               setQueueInfo(null)
               if (pollerInterval) clearInterval(pollerInterval)
+              console.error('[Analyze] Backend Error:', event.error)
               setError(event.error || 'Analyse fehlgeschlagen.')
               setIsAnalyzing(false)
               return
