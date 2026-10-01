@@ -93,6 +93,7 @@ def main() -> None:
     threads = max(1, min(raw_threads, os.cpu_count() or 2))
     sys.stderr.write(f'Whisper Inferenz-Konfiguration: Modell={model_name}, CPU-Kerne={threads}\n')
 
+    model = WhisperModel(model_name, device='cpu', compute_type='int8', cpu_threads=threads)
     segments, info = model.transcribe(
         str(input_path),
         beam_size=1,
@@ -101,6 +102,10 @@ def main() -> None:
         word_timestamps=True,
         temperature=0,
         hotwords=all_hotwords,
+        condition_on_previous_text=False,
+        no_speech_threshold=None,
+        log_prob_threshold=None,
+        compression_ratio_threshold=None,
         initial_prompt='Transkribiere absolut wörtlich inklusive aller Füllwörter und Pausenlaute: Äh, also, ähm, wir haben, öh, gesprochen.',
     )
 
