@@ -99,7 +99,7 @@ def main() -> None:
         language='de',
         beam_size=1,
         best_of=1,
-        vad_filter=False,
+        vad_filter=True,
         word_timestamps=True,
         temperature=0,
         hotwords=all_hotwords,

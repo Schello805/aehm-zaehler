@@ -388,6 +388,7 @@ function App() {
   const [activePlayTime, setActivePlayTime] = useState(0)
 
   const [fetchedMediaInfo, setFetchedMediaInfo] = useState<{ title: string; duration: number; uploader?: string; directAudioUrl?: string } | null>(null)
+  const [fileDuration, setFileDuration] = useState<number | null>(null)
   const [isFetchingMediaInfo, setIsFetchingMediaInfo] = useState(false)
   const [queueInfo, setQueueInfo] = useState<{ position: number; total: number; message: string } | null>(null)
   const [showSelfHostModal, setShowSelfHostModal] = useState(false)
@@ -1591,6 +1592,7 @@ ${advice.summary}
     }
 
     if (!file && !url) {
+      setFileDuration(null)
       return
     }
 
@@ -1600,6 +1602,7 @@ ${advice.summary}
 
       const onLoadedMetadata = () => {
         const duration = Number.isFinite(media.duration) ? media.duration : null
+        setFileDuration(duration)
         const estimate = getEstimatedAnalysisSeconds(duration ?? undefined)
         setProgress((current) => ({ ...current, remainingSeconds: estimate }))
       }
@@ -1607,6 +1610,7 @@ ${advice.summary}
       media.preload = 'metadata'
       media.addEventListener('loadedmetadata', onLoadedMetadata)
       media.addEventListener('error', () => {
+        setFileDuration(null)
         setProgress((current) => ({ ...current, remainingSeconds: defaultEstimatedAnalysisSeconds }))
       })
 
@@ -2354,6 +2358,12 @@ ${advice.summary}
                 <input value={analysisTags} onChange={(event) => setAnalysisTags(event.target.value)} placeholder="Tags, z. B. Podcast, Training" />
                 <textarea value={analysisNote} onChange={(event) => setAnalysisNote(event.target.value)} placeholder="Notiz zur Aufnahme (optional)" rows={2} />
               </div>
+
+              {((fileDuration && fileDuration > 3600) || (fetchedMediaInfo?.duration && fetchedMediaInfo.duration > 3600)) && (
+                <div className="warning-callout" style={{ padding: '1rem', backgroundColor: 'var(--card-bg-light)', borderLeft: '4px solid #f59e0b', borderRadius: '4px', marginBottom: '1.5rem', fontSize: '0.95rem' }}>
+                  <strong>Hinweis bei langen Videos:</strong> Dateien über 1 Stunde können lange dauern. Wir haben einen Bug behoben, der das Video bisher abbrechen ließ, aber die Dauer der Analyse kann dennoch erheblich sein.
+                </div>
+              )}
 
               <button className="analyze-button" type="button" disabled={!isAnalyzing && (!file && !url)} onClick={isAnalyzing ? cancelAnalysis : () => analyze()}>
                 <span className="button-label">{isAnalyzing ? 'Analyse abbrechen' : 'Analyse starten'}</span>
