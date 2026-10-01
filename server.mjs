@@ -1184,10 +1184,18 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
         jobState.childProcess = childProcess
 
         let isFinalized = false
+        
+        const pythonTimeout = setTimeout(() => {
+          if (isFinalized) return
+          console.error('[analyze] Python process timed out after 2 hours. Killing process tree.')
+          killProcessTree(childProcess)
+          reject(new Error('Die Analyse hat das Zeitlimit von 2 Stunden überschritten und wurde abgebrochen.'))
+        }, 2 * 60 * 60 * 1000)
 
         const finalizeAnalysis = (doneData = null) => {
           if (isFinalized) return
           isFinalized = true
+          clearTimeout(pythonTimeout)
 
           const text = String((doneData && doneData.text) || textParts.join(' '))
           const finalDuration = Number((doneData && doneData.duration) || duration || jobState.duration || 0)
@@ -1326,11 +1334,13 @@ app.post('/api/analyze', upload.single('file'), async (request, response) => {
         })
 
         childProcess.on('error', (err) => {
+          clearTimeout(pythonTimeout)
           console.error('[analyze] Python process spawn error:', err)
           reject(err)
         })
 
         childProcess.on('close', (code) => {
+          clearTimeout(pythonTimeout)
           console.log('[analyze] Python process exited with code:', code)
           if (stdoutBuffer.trim()) {
             processLine(stdoutBuffer)

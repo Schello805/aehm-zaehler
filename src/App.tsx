@@ -369,14 +369,8 @@ function App() {
   const [result, setResult] = useState<Result | null>(null)
   const [error, setError] = useState('')
   const [progress, setProgress] = useState<ProgressState>({ percent: 5, step: 0, label: 'Vorbereitung', remainingSeconds: defaultEstimatedAnalysisSeconds })
-  const [history, setHistory] = useState<HistoryEntry[]>(() => {
-    try {
-      const stored = JSON.parse(localStorage.getItem('analysis-history') || '[]')
-      return Array.isArray(stored) ? stored : []
-    } catch {
-      return []
-    }
-  })
+  const [history, setHistory] = useState<HistoryEntry[]>([])
+  const [historyLoaded, setHistoryLoaded] = useState(false)
   const [activeHistoryId, setActiveHistoryId] = useState<string | null>(null)
   const [editingHistoryId, setEditingHistoryId] = useState<string | null>(null)
   const [historyEditValue, setHistoryEditValue] = useState('')
@@ -1436,8 +1430,30 @@ ${advice.summary}
   }, [words])
 
   useEffect(() => {
-    localStorage.setItem('analysis-history', JSON.stringify(history))
-  }, [history])
+    import('idb-keyval').then(({ get }) => {
+      get('analysis-history').then((stored) => {
+        if (Array.isArray(stored)) {
+          setHistory(stored)
+        } else {
+          try {
+            const localStored = JSON.parse(localStorage.getItem('analysis-history') || '[]')
+            if (Array.isArray(localStored)) setHistory(localStored)
+          } catch {}
+        }
+        setHistoryLoaded(true)
+      }).catch((err) => {
+        console.error('Failed to load history from IndexedDB', err)
+        setHistoryLoaded(true)
+      })
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!historyLoaded) return
+    import('idb-keyval').then(({ set }) => {
+      set('analysis-history', history).catch(err => console.error('Failed to save history to IndexedDB', err))
+    })
+  }, [history, historyLoaded])
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light')
