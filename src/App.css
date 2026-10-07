@@ -3648,6 +3648,18 @@ body { transition: background 0.35s ease, color 0.35s ease; }
   border-color: #ea580c;
 }
 
+.report-btn-facebook {
+  background: rgba(24, 119, 242, 0.09);
+  border-color: rgba(24, 119, 242, 0.3);
+  color: #1877f2;
+  font-weight: 700;
+}
+
+.report-btn-facebook:hover {
+  background: rgba(24, 119, 242, 0.17);
+  border-color: #1877f2;
+}
+
 .report-btn-copy {
   background: rgba(199, 91, 71, 0.08);
   border-color: rgba(199, 91, 71, 0.25);
@@ -3707,6 +3719,12 @@ body { transition: background 0.35s ease, color 0.35s ease; }
   background: rgba(234, 88, 12, 0.22);
   border-color: rgba(234, 88, 12, 0.45);
   color: #fb923c;
+}
+
+:root[data-theme="dark"] .report-btn-facebook {
+  background: rgba(24, 119, 242, 0.22);
+  border-color: rgba(96, 165, 250, 0.45);
+  color: #60a5fa;
 }
 
 :root[data-theme="dark"] .report-btn-copy {
@@ -7651,7 +7669,6 @@ body { transition: background 0.35s ease, color 0.35s ease; }
     align-items: flex-start;
   }
 }
-
 
 
 

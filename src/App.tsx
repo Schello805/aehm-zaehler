@@ -518,7 +518,7 @@ function App() {
   const analysisControllerRef = useRef<AbortController | null>(null)
   const currentJobIdRef = useRef<string | null>(null)
   const liveSegmentsRef = useRef<TranscriptSegment[]>([])
-  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'copied-comment' | 'copied-link'>('idle')
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'copied-comment' | 'copied-facebook' | 'copied-link'>('idle')
   const [installPrompt, setInstallPrompt] = useState<any>(null)
   const effectiveAudioUrl = useMemo(() => {
     if (file) return URL.createObjectURL(file)
@@ -1165,7 +1165,7 @@ function App() {
     window.print()
   }
 
-  const copyFeedbackComment = () => {
+  const copyFeedbackComment = (platform: 'youtube' | 'facebook') => {
     if (!result) return
     const topWords = Object.entries(result.counts || {})
       .filter(([, count]) => count > 0)
@@ -1185,7 +1185,23 @@ function App() {
       }).join('\n')
     }
 
-    const commentText = `Hallo, das Format ist super und ich schätze eure Inhalte und Themen sehr! Ich würde die Videos gerne voll aufsaugen, allerdings lenken mich häufige Füllwörter wie „äh“ und „ähm“ leider stark vom eigentlichen Inhalt ab.
+    const hasNoFillers = effectiveFillers === 0
+    const platformIntro = platform === 'youtube'
+      ? 'Kommentar zu diesem Video:'
+      : 'Mein Eindruck zu diesem Video:'
+    const commentText = hasNoFillers
+      ? `${platformIntro}
+
+Richtig stark: In dieser Aufnahme wurden keine der geprüften Füllwörter erkannt. Der Sprechfluss ist klar, souverän und angenehm zu verfolgen – so kommen die Inhalte besonders gut zur Geltung!
+
+⏱️ Dauer: ${formatTimestamp(result.duration)} Min.
+🗣️ Wörter gesamt: ${result.totalWords.toLocaleString('de-DE')}${speakerSection}
+
+Wer die eigene Ausdrucksweise vor der Veröffentlichung eines Videos prüfen möchte, kann das kostenlos mit dem Ähm-Zähler tun:
+🔗 https://www.aehm-zaehler.de`
+      : `${platformIntro}
+
+Hallo, das Format ist super und ich schätze eure Inhalte und Themen sehr! Ich würde die Videos gerne voll aufsaugen, allerdings lenken mich häufige Füllwörter wie „äh“ und „ähm“ leider stark vom eigentlichen Inhalt ab.
 
 Ich möchte hier rein konstruktives Feedback dalassen, ohne jemanden verletzen oder angreifen zu wollen. Vor einiger Zeit habe ich bei einem Rhetorik-Seminar gelernt, aktiv auf Füllwörter zu achten – seitdem fallen sie mir beim Zuhören leider extrem auf.
 
@@ -1200,10 +1216,11 @@ ${topWords || '• Keine Füllwörter gefunden'}
 
 Vielleicht hilft euch das Feedback dabei, den Sprechfluss noch weiter zu verfeinern, damit die starken Inhalte noch besser zur Geltung kommen!
 
-🔗 Erstellt mit https://aehm-zaehler.de`
+Wer die eigene Ausdrucksweise vor der Veröffentlichung eines Videos prüfen möchte, kann das kostenlos mit dem Ähm-Zähler tun:
+🔗 https://www.aehm-zaehler.de`
 
     navigator.clipboard.writeText(commentText).then(() => {
-      setCopyStatus('copied-comment')
+      setCopyStatus(platform === 'youtube' ? 'copied-comment' : 'copied-facebook')
       setTimeout(() => setCopyStatus('idle'), 2500)
     }).catch(() => {})
   }
@@ -2623,10 +2640,18 @@ ${advice.summary}
                         <button
                           type="button"
                           className="report-btn report-btn-comment"
-                          onClick={copyFeedbackComment}
-                          title="Freundliches Feedback mit Einleitung als YouTube-Kommentar kopieren"
+                          onClick={() => copyFeedbackComment('youtube')}
+                          title="Konstruktives Feedback oder Lob als YouTube-Kommentar kopieren"
                         >
-                          {copyStatus === 'copied-comment' ? '✓ Kommentar kopiert!' : '💬 YouTube-Kommentar kopieren'}
+                          {copyStatus === 'copied-comment' ? '✓ YouTube-Text kopiert!' : '💬 YouTube-Text kopieren'}
+                        </button>
+                        <button
+                          type="button"
+                          className="report-btn report-btn-facebook"
+                          onClick={() => copyFeedbackComment('facebook')}
+                          title="Konstruktives Feedback oder Lob als Facebook-Beitrag kopieren"
+                        >
+                          {copyStatus === 'copied-facebook' ? '✓ Facebook-Text kopiert!' : '👍 Facebook-Text kopieren'}
                         </button>
                         <button
                           type="button"
