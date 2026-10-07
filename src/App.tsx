@@ -1195,7 +1195,11 @@ function App() {
 Richtig stark: In dieser Aufnahme wurden keine der geprüften Füllwörter erkannt. Der Sprechfluss ist klar, souverän und angenehm zu verfolgen – so kommen die Inhalte besonders gut zur Geltung!
 
 ⏱️ Dauer: ${formatTimestamp(result.duration)} Min.
-🗣️ Wörter gesamt: ${result.totalWords.toLocaleString('de-DE')}${speakerSection}
+🗣️ Wörter gesamt: ${result.totalWords.toLocaleString('de-DE')}
+✅ Füllwörter gesamt: ${effectiveFillers} (${((result.relativeRate || 0) * 100).toLocaleString('de-DE', { maximumFractionDigits: 1 })} % — ca. ${ratePerMin.toLocaleString('de-DE', { maximumFractionDigits: 1 })} Füllwörter/Min.)${speakerSection}
+
+🔍 Geprüfte Füllwörter:
+${topWords || '• Keine Füllwörter gefunden'}
 
 Wer die eigene Ausdrucksweise vor der Veröffentlichung eines Videos prüfen möchte, kann das kostenlos mit dem Ähm-Zähler tun:
 🔗 https://www.aehm-zaehler.de`
