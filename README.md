@@ -90,7 +90,8 @@ Danach erreichbar unter:
 ├── install.sh               # One-Liner Installer für Debian 13 LXC
 ├── update.sh                # Automatisiertes Update-Skript
 ├── server.mjs               # Express API & Production Static Server
-├── transcribe_local.py      # Python Whisper-Engine mit Hotword-Tuning
+├── transcribe_chunks.py     # Python Whisper-Engine mit Checkpoints für lange Medien
+├── transcribe_local.py      # Hilfsfunktionen für lokale Audioanalyse
 ├── src/                     # React Frontend Source Code
 ├── public/                  # Statische Assets
 ├── package.json             # Node Scripts & Dependencies

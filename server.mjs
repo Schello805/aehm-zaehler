@@ -2,12 +2,13 @@ import express from 'express'
 import rateLimit from 'express-rate-limit'
 import multer from 'multer'
 import { create as createYoutubeDl } from 'youtube-dl-exec'
-import { mkdtemp, readFile, readdir, rm, writeFile, stat } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile, stat } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
 import { tmpdir, setPriority } from 'node:os'
+import { createHash, randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { existsSync, readFileSync, createWriteStream, createReadStream } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, createWriteStream, createReadStream } from 'node:fs'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
@@ -48,6 +49,16 @@ if (existsSync(envFile)) {
 
 const app = express()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 200 * 1024 * 1024 } })
+const largeUploadDirectory = join(tmpdir(), 'aehmzaehler-uploads')
+mkdirSync(largeUploadDirectory, { recursive: true })
+const analyzeUpload = multer({
+  storage: multer.diskStorage({
+    destination: largeUploadDirectory,
+    filename: (_request, _file, callback) => callback(null, `${randomUUID()}.upload`),
+  }),
+  limits: { fileSize: 20 * 1024 * 1024 * 1024 },
+})
+const analysisJobsDirectory = process.env.ANALYSIS_JOBS_DIR || join(projectRoot, '.analysis-jobs')
 app.use(express.json())
 const port = process.env.PORT || 8787
 
@@ -73,10 +84,38 @@ const getPythonPath = () => {
 }
 
 const getTranscriptionScript = () => {
+  const chunkScript = join(projectRoot, 'transcribe_chunks.py')
+  if (existsSync(chunkScript)) return chunkScript
+  if (existsSync('/opt/aehm-zaehler/transcribe_chunks.py')) return '/opt/aehm-zaehler/transcribe_chunks.py'
   const localScript = join(projectRoot, 'transcribe_local.py')
   if (existsSync(localScript)) return localScript
   if (existsSync('/opt/aehm-zaehler/transcribe_local.py')) return '/opt/aehm-zaehler/transcribe_local.py'
   return localScript
+}
+
+const getAnalysisWorkKey = async (request, words) => {
+  const hash = createHash('sha256')
+  if (request.file?.path) {
+    for await (const chunk of createReadStream(request.file.path)) hash.update(chunk)
+  } else {
+    hash.update(String(request.body.sourceUrl || request.body.url || '').trim().toLowerCase())
+  }
+  hash.update('\0')
+  hash.update([...words].sort().join('\0'))
+  hash.update('\0')
+  hash.update(process.env.WHISPER_MODEL || 'small')
+  hash.update('\0chunk-v1-600s')
+  return hash.digest('hex')
+}
+
+const moveFileIntoWorkDirectory = async (sourcePath, destinationPath) => {
+  try {
+    await rename(sourcePath, destinationPath)
+  } catch (error) {
+    if (error?.code !== 'EXDEV') throw error
+    await copyFile(sourcePath, destinationPath)
+    await rm(sourcePath, { force: true })
+  }
 }
 
 const commonYtDlpOptions = {
@@ -751,6 +790,25 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000)
 
+const ANALYSIS_CHECKPOINT_TTL_MS = 7 * 24 * 60 * 60 * 1000
+const checkpointCleanupTimer = setInterval(async () => {
+  try {
+    const entries = await readdir(analysisJobsDirectory, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const workDirectory = join(analysisJobsDirectory, entry.name)
+      const activityPath = join(workDirectory, 'activity.json')
+      const activity = await stat(activityPath).catch(() => stat(workDirectory))
+      if (Date.now() - activity.mtimeMs > ANALYSIS_CHECKPOINT_TTL_MS) {
+        await rm(workDirectory, { recursive: true, force: true })
+      }
+    }
+  } catch (error) {
+    if (error?.code !== 'ENOENT') console.warn('[analyze] Checkpoint cleanup note:', error?.message)
+  }
+}, 6 * 60 * 60 * 1000)
+checkpointCleanupTimer.unref?.()
+
 app.get('/api/health', (request, response) => {
   return response.json({ ok: true, uptime: process.uptime(), activeJobs: activeJobs.size })
 })
@@ -767,6 +825,7 @@ app.get('/api/analyze-status/:id', (request, response) => {
     return response.json({
       id,
       status: 'initializing',
+      missing: true,
       stage: 'init',
       message: 'Initialisiere Analyse...',
       percent: 5,
@@ -780,8 +839,17 @@ app.get('/api/analyze-status/:id', (request, response) => {
     console.log(`[analyze-status] ${id} -> status=${job.status}, percent=${job.percent}%, currentTime=${job.currentTime || 0}s/${job.duration || 0}s, segments=${job.segments?.length || 0}`)
   }
 
-  const { childProcess: _unused, ...safeJob } = job
-  return response.json(safeJob)
+  const { childProcess: _unused, result, ...safeJob } = job
+  return response.json({ ...safeJob, hasResult: Boolean(result) })
+})
+
+app.get('/api/analyze-result/:id', (request, response) => {
+  response.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+  const job = activeJobs.get(request.params.id)
+  if (!job || job.status !== 'complete' || !job.result) {
+    return response.status(404).json({ error: 'Das Analyseergebnis ist noch nicht verfügbar.' })
+  }
+  return response.json({ result: job.result })
 })
 
 app.get('/api/audio-stream/:id', async (request, response) => {
@@ -913,13 +981,23 @@ const analyzeLimiter = rateLimit({
   message: { error: 'Zu viele Analysen gestartet. Bitte warte einige Minuten, bevor du weitere Videos hochlädst oder verlinkst.' },
 })
 
-app.post('/api/analyze', analyzeLimiter, upload.single('file'), async (request, response) => {
+app.post('/api/analyze', analyzeLimiter, (request, response, next) => {
+  analyzeUpload.single('file')(request, response, (error) => {
+    if (!error) return next()
+    const message = error.code === 'LIMIT_FILE_SIZE'
+      ? 'Die Datei ist größer als das Upload-Limit von 20 GB.'
+      : `Datei-Upload fehlgeschlagen: ${error.message}`
+    return response.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ error: message })
+  })
+}, async (request, response) => {
   request.body = request.body || {}
   let temporaryDirectory
   let childProcess = null
   let isAborted = false
   let heartbeat = null
   let isSlotAcquired = false
+  let jobWorkDirectory = null
+  const uploadedFilePath = request.file?.path || null
 
   const jobId = String(request.body.jobId || `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`)
   const jobState = {
@@ -1001,8 +1079,9 @@ app.post('/api/analyze', analyzeLimiter, upload.single('file'), async (request, 
     }
 
     if (response.writableEnded || isAborted) return
-    const json = JSON.stringify(data)
-    response.write(`data: ${json}\n\n: ${' '.repeat(2048)}\n\n`)
+    const eventData = data.type === 'complete' ? { type: 'complete', resultAvailable: true } : data
+    const json = JSON.stringify(eventData)
+    response.write(`data: ${json}\n\n`)
   }
 
   request.on('close', () => {
@@ -1050,9 +1129,24 @@ app.post('/api/analyze', analyzeLimiter, upload.single('file'), async (request, 
       }
 
       temporaryDirectory = await mkdtemp(join(tmpdir(), 'aehmzaehler-'))
-      console.log('[analyze] Temp dir:', temporaryDirectory)
+      const analysisKey = await getAnalysisWorkKey(request, words)
+      jobWorkDirectory = join(analysisJobsDirectory, analysisKey)
+      await mkdir(jobWorkDirectory, { recursive: true })
+      await writeFile(join(jobWorkDirectory, 'activity.json'), JSON.stringify({ updatedAt: Date.now() }))
+      console.log('[analyze] Temp dir:', temporaryDirectory, 'checkpoint dir:', jobWorkDirectory)
 
-      let file = request.file
+      const sourceMediaPath = join(jobWorkDirectory, 'source-media')
+      const workingAudioPath = join(jobWorkDirectory, 'prepared-audio.mp3')
+      const audioReadyPath = join(jobWorkDirectory, 'audio-ready.json')
+      const chunksDirectory = join(jobWorkDirectory, 'chunks')
+      const chunksReadyPath = join(jobWorkDirectory, 'chunks-ready.json')
+      const manifestPath = join(jobWorkDirectory, 'manifest.json')
+      const hasPreparedAudio = existsSync(audioReadyPath) && existsSync(workingAudioPath)
+      let file = hasPreparedAudio
+        ? { path: workingAudioPath, originalname: request.file?.originalname || 'prepared-audio.mp3', mimetype: 'audio/mpeg' }
+        : existsSync(sourceMediaPath)
+          ? { path: sourceMediaPath, originalname: request.file?.originalname || 'saved-source', mimetype: 'application/octet-stream' }
+          : request.file
       let mediaTitle = request.body.title ? String(request.body.title).trim() : ''
       let metadataInfo = null
       
@@ -1082,7 +1176,7 @@ app.post('/api/analyze', analyzeLimiter, upload.single('file'), async (request, 
           sendEvent({ type: 'status', stage: 'download', message: `Lade Audio „${mediaTitle || 'Podcast'}“ direkt...` })
           const audioRes = await fetch(metadataInfo.directAudioUrl, {
             headers: { 'User-Agent': 'Mozilla/5.0' },
-            signal: AbortSignal.timeout(120000),
+            signal: AbortSignal.timeout(12 * 60 * 60 * 1000),
           })
           if (!audioRes.ok) throw new Error(`Audio-Download fehlgeschlagen (HTTP ${audioRes.status})`)
           rawFilePath = join(temporaryDirectory, 'direct-audio.mp3')
@@ -1107,7 +1201,7 @@ app.post('/api/analyze', analyzeLimiter, upload.single('file'), async (request, 
                 extractAudio: true,
                 audioFormat: 'mp3',
                 output,
-              }, { timeout: 10 * 60 * 1000 })
+              }, { timeout: 12 * 60 * 60 * 1000 })
             } catch (ytSearchErr) {
               console.error('[analyze] Spotify ytsearch failed:', ytSearchErr?.message)
               throw new Error('Spotify-DRM: Die Spotify-Folge konnte nicht über offene Podcast-Quellen heruntergeladen werden. Bitte lade die Audiodatei direkt als MP3/M4A hoch.')
@@ -1119,7 +1213,7 @@ app.post('/api/analyze', analyzeLimiter, upload.single('file'), async (request, 
                 extractAudio: true,
                 audioFormat: 'mp3',
                 output,
-              }, { timeout: 10 * 60 * 1000 })
+              }, { timeout: 12 * 60 * 60 * 1000 })
             } catch (dlErr) {
               const msg = dlErr instanceof Error ? dlErr.message : String(dlErr)
               console.error('[analyze] yt-dlp Fehler:', msg)
@@ -1144,21 +1238,74 @@ app.post('/api/analyze', analyzeLimiter, upload.single('file'), async (request, 
         return response.end()
       }
 
-      const workingAudioPath = join(temporaryDirectory, 'prepared-audio.mp3')
-      const inputPath = join(temporaryDirectory, 'input-media')
+      if (!hasPreparedAudio) {
+        if (!existsSync(sourceMediaPath)) {
+          if (file.buffer) {
+            await writeFile(sourceMediaPath, file.buffer)
+          } else if (file.path) {
+            await moveFileIntoWorkDirectory(file.path, sourceMediaPath)
+          }
+        }
+        if (!existsSync(sourceMediaPath)) throw new Error('Die Quelldatei konnte nicht dauerhaft zwischengespeichert werden.')
 
-      if (file.buffer) {
-        await writeFile(inputPath, file.buffer)
-        console.log('[analyze] Uploaded file saved to disk, size:', file.buffer.length)
-      } else if (file.path) {
-        // file is already at file.path on disk
+        console.log('[analyze] Converting & optimizing audio for Whisper KI from:', sourceMediaPath)
+        sendEvent({ type: 'status', stage: 'converting', message: 'Optimiere Audio für Whisper KI...' })
+        await runCommand('ffmpeg', [
+          '-nostdin', '-hide_banner', '-loglevel', 'error', '-y', '-i', sourceMediaPath,
+          '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000', '-b:a', '48k', workingAudioPath,
+        ], { timeout: 12 * 60 * 60 * 1000, maxBuffer: 8 * 1024 * 1024 })
+        const preparedStats = await stat(workingAudioPath)
+        await writeFile(audioReadyPath, JSON.stringify({ size: preparedStats.size, savedAt: Date.now() }))
+        await rm(sourceMediaPath, { force: true })
+      }
+      jobState.audioPath = workingAudioPath
+
+      let chunkFiles = []
+      if (existsSync(chunksReadyPath)) {
+        try {
+          const chunkMarker = JSON.parse(await readFile(chunksReadyPath, 'utf8'))
+          chunkFiles = (await readdir(chunksDirectory))
+            .filter((name) => /^chunk-\d{5}\.mp3$/.test(name))
+            .sort()
+            .map((name) => join(chunksDirectory, name))
+          const chunkStats = await Promise.all(chunkFiles.map((chunkPath) => stat(chunkPath).catch(() => null)))
+          if (chunkFiles.length !== Number(chunkMarker.count) || chunkStats.some((chunkStat) => !chunkStat || chunkStat.size === 0)) {
+            chunkFiles = []
+          }
+        } catch {
+          chunkFiles = []
+        }
+      }
+      if (chunkFiles.length === 0) {
+        await rm(chunksDirectory, { recursive: true, force: true })
+        await mkdir(chunksDirectory, { recursive: true })
+        sendEvent({ type: 'status', stage: 'converting', message: 'Teile Audio in wiederaufnehmbare 10-Minuten-Abschnitte...' })
+        await runCommand('ffmpeg', [
+          '-nostdin', '-hide_banner', '-loglevel', 'error', '-y', '-i', workingAudioPath,
+          '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'libmp3lame', '-b:a', '48k',
+          '-f', 'segment', '-segment_time', '600', '-reset_timestamps', '1', join(chunksDirectory, 'chunk-%05d.mp3'),
+        ], { timeout: 12 * 60 * 60 * 1000, maxBuffer: 8 * 1024 * 1024 })
+        chunkFiles = (await readdir(chunksDirectory))
+          .filter((name) => /^chunk-\d{5}\.mp3$/.test(name))
+          .sort()
+          .map((name) => join(chunksDirectory, name))
+        if (chunkFiles.length === 0) throw new Error('ffmpeg hat keine Audioabschnitte erzeugt.')
+        await writeFile(chunksReadyPath, JSON.stringify({ count: chunkFiles.length, chunkSeconds: 600, savedAt: Date.now() }))
       }
 
-      const sourceAudioFile = file.path || inputPath
-      console.log('[analyze] Converting & optimizing audio for Whisper KI from:', sourceAudioFile)
-      sendEvent({ type: 'status', stage: 'converting', message: 'Optimiere Audio für Whisper KI...' })
-      await runCommand('ffmpeg', ['-y', '-i', sourceAudioFile, '-vn', '-ac', '1', '-ar', '16000', '-b:a', '48k', workingAudioPath], { timeout: 10 * 60 * 1000 })
-      jobState.audioPath = workingAudioPath
+      const { stdout: probedDuration } = await runCommand('ffprobe', [
+        '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', workingAudioPath,
+      ], { timeout: 60 * 1000, maxBuffer: 1024 * 1024 })
+      const totalDuration = Number.parseFloat(String(probedDuration).trim()) || Number(metadataInfo?.duration || 0)
+      const manifest = {
+        duration: totalDuration,
+        chunks: chunkFiles.map((chunkPath, index) => ({
+          path: chunkPath,
+          checkpoint: join(jobWorkDirectory, 'checkpoints', `chunk-${String(index).padStart(5, '0')}.json`),
+          offset: index * 600,
+        })),
+      }
+      await writeFile(manifestPath, JSON.stringify(manifest))
 
       const pythonPath = getPythonPath()
       const scriptPath = getTranscriptionScript()
@@ -1171,13 +1318,15 @@ app.post('/api/analyze', analyzeLimiter, upload.single('file'), async (request, 
         let duration = 0
         const segments = []
         const textParts = []
+        const incrementalCounts = Object.fromEntries(words.map((word) => [word, 0]))
+        let incrementalTotalWords = 0
         let stdoutBuffer = ''
         let stderrBuffer = ''
 
         const whisperThreads = process.env.WHISPER_THREADS || '2'
         const whisperModel = process.env.WHISPER_MODEL || 'small'
         console.log(`[analyze] Running Whisper process (model=${whisperModel}, threads=${whisperThreads})`)
-        childProcess = spawn(pythonPath, [scriptPath, workingAudioPath, words.join(',')], {
+        childProcess = spawn(pythonPath, [scriptPath, manifestPath, words.join(',')], {
           env: {
             ...process.env,
             OMP_NUM_THREADS: String(whisperThreads),
@@ -1197,10 +1346,10 @@ app.post('/api/analyze', analyzeLimiter, upload.single('file'), async (request, 
         
         const pythonTimeout = setTimeout(() => {
           if (isFinalized) return
-          console.error('[analyze] Python process timed out after 2 hours. Killing process tree.')
+          console.error('[analyze] Python process timed out after 48 hours. Killing process tree.')
           killProcessTree(childProcess)
-          reject(new Error('Die Analyse hat das Zeitlimit von 2 Stunden überschritten und wurde abgebrochen.'))
-        }, 2 * 60 * 60 * 1000)
+          reject(new Error('Die Analyse hat das Zeitlimit von 48 Stunden überschritten. Bereits abgeschlossene Abschnitte sind gespeichert und können bei einem neuen Versuch wiederverwendet werden.'))
+        }, 48 * 60 * 60 * 1000)
 
         const finalizeAnalysis = (doneData = null) => {
           if (isFinalized) return
@@ -1281,6 +1430,26 @@ app.post('/api/analyze', analyzeLimiter, upload.single('file'), async (request, 
                 partialText: '',
                 segments: [],
               })
+            } else if (data.type === 'chunk') {
+              void writeFile(join(jobWorkDirectory, 'activity.json'), JSON.stringify({ updatedAt: Date.now() })).catch(() => {})
+              const completedChunks = Number(data.index || 0) + 1
+              const percent = duration > 0 ? Math.min(99, Math.max(5, Math.round((completedChunks * 600 / duration) * 100))) : 5
+              const chunkFillerWords = Object.values(incrementalCounts).reduce((sum, count) => sum + count, 0)
+              const chunkBaseFillerWords = Math.max(0, chunkFillerWords - getPhraseOverlap(words, incrementalCounts))
+              sendEvent({
+                type: 'progress',
+                percent,
+                currentTime: Math.min(duration, completedChunks * 600),
+                duration,
+                counts: incrementalCounts,
+                totalWords: incrementalTotalWords,
+                fillerWords: chunkFillerWords,
+                baseFillerWords: chunkBaseFillerWords,
+                relativeRate: incrementalTotalWords ? chunkBaseFillerWords / incrementalTotalWords : 0,
+                partialText: '',
+                chunkComplete: true,
+                message: `Abschnitt ${completedChunks} verarbeitet${data.cached ? ' (Checkpoint)' : ''}`,
+              })
             } else if (data.type === 'segment' && data.segment) {
               const seg = {
                 start: Number(data.segment.start || 0),
@@ -1290,14 +1459,16 @@ app.post('/api/analyze', analyzeLimiter, upload.single('file'), async (request, 
               }
               segments.push(seg)
               textParts.push(seg.text)
-              console.log('[analyze] Segment (', seg.start.toFixed(1), 's -', seg.end.toFixed(1), 's):', seg.text)
+              if (segments.length % 100 === 0) console.log(`[analyze] ${segments.length} Segmente verarbeitet; Position ${Math.round(seg.end)}s`)
 
-              const currentText = textParts.join(' ')
-              const counts = Object.fromEntries(words.map((word) => [word, countWordOccurrences(currentText, word)]))
+              const segmentTokenCount = tokenizeText(seg.text).length
+              incrementalTotalWords += segmentTokenCount
+              for (const word of words) incrementalCounts[word] += countWordOccurrences(seg.text, word)
+              const counts = { ...incrementalCounts }
               const fillerWords = Object.values(counts).reduce((sum, count) => sum + count, 0)
               const phraseOverlap = getPhraseOverlap(words, counts)
               const baseFillerWords = Math.max(0, fillerWords - phraseOverlap)
-              const totalWords = currentText.trim() ? currentText.trim().split(/\s+/).length : 0
+              const totalWords = incrementalTotalWords
               const relativeRate = totalWords ? baseFillerWords / totalWords : 0
               const percent = duration > 0 ? Math.min(99, Math.max(5, Math.round((seg.end / duration) * 100))) : 50
 
@@ -1311,7 +1482,7 @@ app.post('/api/analyze', analyzeLimiter, upload.single('file'), async (request, 
                 baseFillerWords,
                 totalWords,
                 relativeRate,
-                partialText: currentText.slice(-300),
+                partialText: textParts.slice(-4).join(' ').slice(-300),
                 segment: seg,
               })
             } else if (data.type === 'done') {
@@ -1383,6 +1554,7 @@ app.post('/api/analyze', analyzeLimiter, upload.single('file'), async (request, 
     } finally {
       if (heartbeat) clearInterval(heartbeat)
       if (typeof temporaryDirectory === 'string') await rm(temporaryDirectory, { recursive: true, force: true })
+      if (uploadedFilePath) await rm(uploadedFilePath, { force: true })
       if (isSlotAcquired) {
         isSlotAcquired = false
         releaseAnalysisSlot()

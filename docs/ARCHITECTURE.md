@@ -29,7 +29,7 @@ Das Express-Backend koordiniert:
 
 ### Python-Transkription
 
-`transcribe_local.py` verwendet `faster-whisper`, um die Audiodaten lokal zu transkribieren. Dabei werden deutsche Fülllaute und kurze Wörter bevorzugt behandelt, um eine robustere Erkennung zu erreichen.
+`transcribe_chunks.py` verwendet `faster-whisper`, um die Audioabschnitte lokal zu transkribieren. `transcribe_local.py` enthält weiterhin Hilfsfunktionen für Audioanalyse.
 
 ## Datenfluss
 
@@ -60,3 +60,13 @@ Ergebnis im Frontend
 - Standardbetrieb läuft ohne externe API-Keys
 - Ergebnisse müssen reproduzierbar und nachvollziehbar sein
 - Laufzeit- und Fortschrittsinfos sollen realistisch bleiben
+
+## Lange Videos und Wiederaufnahme
+
+Die Analyse normalisiert Audio und zerlegt es in zehnminütige Abschnitte. Whisper lädt das Modell einmal und verarbeitet die Abschnitte nacheinander. Jeder abgeschlossene Abschnitt wird atomar als Checkpoint gespeichert; bei einem erneuten Versuch mit derselben Quelle und Suchwortliste werden fertige Abschnitte übersprungen.
+
+Uploads für `/api/analyze` werden auf Festplatte angenommen (bis 20 GB), nicht vollständig im Node.js-Arbeitsspeicher gehalten. Arbeitsdateien und Checkpoints liegen standardmäßig in `.analysis-jobs/`; `ANALYSIS_JOBS_DIR` kann den Speicherort ändern. Nicht verwendete Arbeitsverzeichnisse werden nach sieben Tagen entfernt. Der Server benötigt ausreichend freien Festplattenspeicher für die Quelldatei und das normalisierte Audio.
+
+Fortschritt bleibt über die Job-ID abrufbar. Das vollständige Ergebnis wird separat geladen, sobald der Job abgeschlossen ist, damit lange Transkripte nicht bei jedem Statusabruf erneut übertragen werden. Verliert eine noch geöffnete Browser-Sitzung die Serververbindung, kann sie den Auftrag erneut senden und abgeschlossene Abschnitte fortsetzen. Nach einem Browser-Neustart muss eine Upload-Datei erneut ausgewählt werden.
+
+Die automatische Füllworterkennung verwendet keine Fülllaut-Hotwords mehr, die kurze Wörter wie „es“ in Richtung „ähm“ verzerren können. Unsichere Fülllaut-Worttokens unter 0,65 Modellwahrscheinlichkeit werden verworfen. Diese Einstellung ist bewusst konservativer, um falsche Treffer zu reduzieren.

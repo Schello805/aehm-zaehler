@@ -517,6 +517,7 @@ function App() {
   const playbackRef = useRef<HTMLAudioElement>(null)
   const analysisControllerRef = useRef<AbortController | null>(null)
   const currentJobIdRef = useRef<string | null>(null)
+  const liveSegmentsRef = useRef<TranscriptSegment[]>([])
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'copied-comment' | 'copied-link'>('idle')
   const [installPrompt, setInstallPrompt] = useState<any>(null)
   const effectiveAudioUrl = useMemo(() => {
@@ -1852,6 +1853,7 @@ ${advice.summary}
 
     const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     currentJobIdRef.current = jobId
+    liveSegmentsRef.current = []
     console.log('[Analyze] Starting analysis with jobId:', jobId, { file: file?.name, url: targetUrl, words })
 
     const directAudioUrl = fetchedMediaInfo?.directAudioUrl
@@ -1862,10 +1864,22 @@ ${advice.summary}
     body.append('words', JSON.stringify(words))
     if (file) body.append('file', file)
     if (sendUrl) body.append('url', sendUrl)
+    if (targetUrl) body.append('sourceUrl', targetUrl)
     if (fetchedMediaInfo?.title) body.append('title', fetchedMediaInfo.title)
 
     let isCompleted = false
+    let completionFetchStarted = false
     let pollerInterval: any = null
+    let requestLost = false
+    let recoveryInFlight = false
+    let recoveryAttempts = 0
+    let missingStatusPolls = 0
+    let fatalRequestError = false
+    let lastProgressUiUpdateAt = 0
+    let lastProgressUiPercent = -1
+    let lastStageMessage = ''
+    let transcriptionProgressStartedAt: number | null = null
+    let transcriptionStartMediaTime = 0
 
     const handleProgressUpdate = (data: any) => {
       if (isCompleted) {
@@ -1884,11 +1898,12 @@ ${advice.summary}
       })
 
       if (data.stage || data.message) {
-        setProgress((prev) => ({
-          ...prev,
-          label: data.message || prev.label,
-          step: data.stage === 'download' ? 0 : data.stage === 'converting' ? 1 : 2,
-        }))
+        const nextMessage = data.message || lastStageMessage
+        const nextStep = data.stage === 'download' ? 0 : data.stage === 'converting' ? 1 : 2
+        if (nextMessage !== lastStageMessage) {
+          lastStageMessage = nextMessage
+          setProgress((prev) => ({ ...prev, label: nextMessage || prev.label, step: nextStep }))
+        }
       }
 
       if (data.percent !== undefined) {
@@ -1896,27 +1911,42 @@ ${advice.summary}
         let remainingSeconds: number | null = null
         if (totalDuration > 0 && data.currentTime && data.currentTime > 0) {
           const remainingAudio = Math.max(0, totalDuration - Number(data.currentTime))
-          remainingSeconds = Math.max(1, Math.round(remainingAudio * 0.35))
+          if (transcriptionProgressStartedAt === null) {
+            transcriptionProgressStartedAt = Date.now()
+            transcriptionStartMediaTime = Number(data.currentTime)
+          }
+          const processedAudioSeconds = Number(data.currentTime) - transcriptionStartMediaTime
+          const elapsedWallSeconds = (Date.now() - transcriptionProgressStartedAt) / 1000
+          remainingSeconds = processedAudioSeconds >= 30
+            ? Math.max(1, Math.ceil((elapsedWallSeconds / processedAudioSeconds) * remainingAudio))
+            : Math.max(1, Math.round(remainingAudio * 0.35))
         } else if (totalDuration > 0) {
           remainingSeconds = getEstimatedAnalysisSeconds(totalDuration)
         }
 
-        setProgress((prev) => ({
-          percent: data.percent || prev.percent,
-          step: 2,
-          label: `Whisper KI analysiert... (${Math.round(data.currentTime || 0)}s / ${Math.round(totalDuration || data.duration || 0)}s)`,
-          remainingSeconds: remainingSeconds !== null ? remainingSeconds : prev.remainingSeconds,
-        }))
+        const now = Date.now()
+        if (data.percent !== lastProgressUiPercent || now - lastProgressUiUpdateAt >= 5000 || data.chunkComplete) {
+          lastProgressUiPercent = data.percent
+          lastProgressUiUpdateAt = now
+          setProgress((prev) => ({
+            percent: data.percent || prev.percent,
+            step: 2,
+            label: data.message || `Whisper KI analysiert... (${Math.round(data.currentTime || 0)}s / ${Math.round(totalDuration || data.duration || 0)}s)`,
+            remainingSeconds: remainingSeconds !== null ? remainingSeconds : prev.remainingSeconds,
+          }))
+        }
       }
 
-      if (data.text || data.partialText || data.segment || (data.segments && data.segments.length > 0)) {
+      if (data.segment) {
+        liveSegmentsRef.current.push(data.segment as TranscriptSegment)
+      } else if (Array.isArray(data.segments) && data.segments.length > 0) {
+        liveSegmentsRef.current = data.segments as TranscriptSegment[]
+      }
+
+      // Hold updates in memory and publish a snapshot once per completed chunk;
+      // copying the growing array for every Whisper segment becomes quadratic.
+      if (data.chunkComplete) {
         setResult((prev) => {
-          let nextSegments = prev?.segments ? [...prev.segments] : []
-          if (data.segment) {
-            nextSegments.push(data.segment)
-          } else if (Array.isArray(data.segments) && data.segments.length > 0) {
-            nextSegments = data.segments
-          }
           return {
             text: data.text || data.partialText || prev?.text || '',
             duration: data.duration || prev?.duration || 0,
@@ -1925,7 +1955,7 @@ ${advice.summary}
             baseFillerWords: data.baseFillerWords ?? prev?.baseFillerWords ?? 0,
             totalWords: data.totalWords ?? prev?.totalWords ?? 0,
             relativeRate: data.relativeRate ?? prev?.relativeRate ?? 0,
-            segments: nextSegments,
+            segments: [...liveSegmentsRef.current.slice(-100)],
             speakers: data.speakers || prev?.speakers,
             mediaTitle: data.mediaTitle || prev?.mediaTitle,
             pauseCount: data.pauseCount || prev?.pauseCount,
@@ -1935,6 +1965,37 @@ ${advice.summary}
       }
 
       if (data.status === 'complete' || data.type === 'complete') {
+        if (!data.result) {
+          if (completionFetchStarted) return
+          completionFetchStarted = true
+          void Promise.resolve()
+            .then(async () => {
+              let lastFetchError: unknown = null
+              for (let attempt = 0; attempt < 3; attempt += 1) {
+                try {
+                  const response = await fetch(`/api/analyze-result/${jobId}`)
+                  if (!response.ok) throw new Error(`Ergebnisabruf fehlgeschlagen (HTTP ${response.status}).`)
+                  const payload = await response.json()
+                  if (!payload.result) throw new Error('Der Server hat kein Analyseergebnis zurückgegeben.')
+                  return payload
+                } catch (fetchError) {
+                  lastFetchError = fetchError
+                  if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)))
+                }
+              }
+              throw lastFetchError
+            })
+            .then((payload) => {
+              handleProgressUpdate({ ...data, result: payload.result })
+            })
+            .catch((fetchError) => {
+              console.error('[Analyze] Final result fetch failed:', fetchError)
+              if (pollerInterval) clearInterval(pollerInterval)
+              setError(fetchError instanceof Error ? fetchError.message : 'Das fertige Ergebnis konnte nicht geladen werden.')
+              setIsAnalyzing(false)
+            })
+          return
+        }
         const finalResult = data.result || {
           text: data.text || '',
           duration: data.duration || 0,
@@ -1951,8 +2012,10 @@ ${advice.summary}
         }
 
         isCompleted = true
-        const enriched = ensureMultiSpeakerDiarization(finalResult, words)
-        console.log('[Analyze] Complete! Final result:', enriched)
+        const enriched = finalResult.speakers && Object.keys(finalResult.speakers).length > 0
+          ? finalResult
+          : ensureMultiSpeakerDiarization(finalResult, words)
+        console.log('[Analyze] Complete!', { duration: enriched.duration, totalWords: enriched.totalWords, segments: enriched.segments?.length })
         setResult(enriched)
         setProgress({ percent: 100, step: progressSteps.length - 1, label: 'Ergebnis fertig', remainingSeconds: 0 })
 
@@ -1989,6 +2052,37 @@ ${advice.summary}
           consecutivePollErrors = 0
           const statusData = await res.json()
           console.log(`[Status Poll] status=${statusData.status}, percent=${statusData.percent}%, stage=${statusData.stage}, currentTime=${statusData.currentTime || 0}s, duration=${statusData.duration || 0}s, segments=${statusData.segments?.length || 0}`)
+          if (statusData.missing) missingStatusPolls += 1
+          else missingStatusPolls = 0
+
+          if (requestLost && statusData.missing && !recoveryInFlight && recoveryAttempts < 5 && missingStatusPolls >= 10 * recoveryAttempts + 10) {
+            recoveryAttempts += 1
+            recoveryInFlight = true
+            requestLost = false
+            setProgress((prev) => ({ ...prev, label: 'Verbindung verloren – setze die Analyse am letzten gespeicherten Abschnitt fort…' }))
+            void (async () => {
+              try {
+                const recoveryResponse = await fetch('/api/analyze', { method: 'POST', body, signal: controller.signal })
+                if (!recoveryResponse.ok) throw new Error(`Wiederaufnahme fehlgeschlagen (HTTP ${recoveryResponse.status}).`)
+                if (recoveryResponse.body) {
+                  const recoveryReader = recoveryResponse.body.getReader()
+                  while (true) {
+                    const { done } = await recoveryReader.read()
+                    if (done) break
+                  }
+                }
+              } catch (recoveryError) {
+                if (!controller.signal.aborted) {
+                  requestLost = true
+                  missingStatusPolls = 0
+                  console.warn('[Analyze] Resume request failed; will retry from checkpoints:', recoveryError)
+                }
+              } finally {
+                recoveryInFlight = false
+              }
+            })()
+          }
+
           if (statusData.status === 'running' || statusData.status === 'initializing') {
             handleProgressUpdate(statusData)
           } else if (statusData.status === 'complete') {
@@ -2024,6 +2118,7 @@ ${advice.summary}
 
       if (!response.ok && !isCompleted) {
         if ([502, 503, 504, 524].includes(response.status)) {
+          requestLost = true
           console.warn(`[Analyze] SSE stream received ${response.status} from proxy/gateway — background status poller will continue tracking the job...`)
         } else {
           let errorMsg = `Server-Fehler (${response.status})`
@@ -2038,6 +2133,7 @@ ${advice.summary}
               }
             }
           } catch {}
+          fatalRequestError = true
           throw new Error(errorMsg)
         }
       }
@@ -2090,6 +2186,7 @@ ${advice.summary}
             }
           }
         }
+        if (!isCompleted && !controller.signal.aborted) requestLost = true
       }
     } catch (requestError) {
       if (requestError instanceof DOMException && requestError.name === 'AbortError' && controller.signal.aborted) {
@@ -2105,7 +2202,15 @@ ${advice.summary}
       // If already marked completed by poller, ignore fetch closure errors
       if (isCompleted) return
 
+      if (fatalRequestError) {
+        if (pollerInterval) clearInterval(pollerInterval)
+        setError(requestError instanceof Error ? requestError.message : 'Analyse fehlgeschlagen.')
+        setIsAnalyzing(false)
+        return
+      }
+
       console.warn('[Analyze] SSE stream closed/timed out, background status polling will continue uninterrupted:', requestError)
+      requestLost = true
       // Note: Do NOT clear pollerInterval here! The background poller is actively tracking /api/analyze-status/:id
       // and will complete the analysis as soon as Whisper finishes on the server.
     } finally {
@@ -5254,4 +5359,3 @@ function LiveStudio({
 }
 
 export default App
-
