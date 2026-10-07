@@ -6532,6 +6532,139 @@ body { transition: background 0.35s ease, color 0.35s ease; }
   }
 }
 
+/* Small-screen analysis layout: keep the headline readable and controls easy to tap. */
+@media (max-width: 640px) {
+  .intro {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    padding: 22px 4px 18px;
+  }
+
+  .intro .eyebrow {
+    order: 2;
+    margin: 0;
+    font-size: 9px;
+    letter-spacing: 1.7px;
+  }
+
+  .intro h1 {
+    order: 1;
+    max-width: 100%;
+    font-size: clamp(32px, 9vw, 44px);
+    letter-spacing: -1.5px;
+    line-height: 0.98;
+  }
+
+  .intro-copy {
+    order: 3;
+    max-width: 42ch;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  .nav-center-tabs {
+    scroll-snap-type: x mandatory;
+    justify-content: flex-start;
+    padding: 4px;
+  }
+
+  .nav-link {
+    flex: 0 0 auto;
+    min-height: 40px;
+    padding: 8px 13px;
+    scroll-snap-align: start;
+  }
+
+  .workspace {
+    gap: 14px !important;
+  }
+
+  .panel {
+    padding: 19px 16px !important;
+  }
+
+  .dropzone {
+    min-height: 112px;
+    border-radius: 12px;
+  }
+
+  .upload-symbol {
+    width: 34px;
+    height: 34px;
+    margin-bottom: 7px;
+    font-size: 19px;
+  }
+
+  .dropzone strong {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 14px;
+  }
+
+  .dropzone span,
+  .url-field-wrap small {
+    font-size: 12px;
+    line-height: 1.45;
+    text-align: center;
+  }
+
+  .url-label-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 7px;
+  }
+
+  .supported-platforms-pills {
+    gap: 6px;
+  }
+
+  .platform-pill {
+    min-height: 30px;
+    padding: 4px 9px;
+    font-size: 11px;
+  }
+
+  .url-field {
+    min-height: 46px;
+    height: auto;
+    padding: 0 11px;
+  }
+
+  .url-field input {
+    min-width: 0;
+    min-height: 44px;
+    font-size: 14px;
+  }
+
+  .analysis-details {
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  .analysis-details input,
+  .analysis-details textarea {
+    min-height: 44px;
+    padding: 10px 11px;
+    border-radius: 9px;
+    font-size: 14px;
+  }
+
+  .analysis-details textarea {
+    min-height: 64px;
+  }
+
+  .analyze-button {
+    min-height: 50px;
+    height: auto;
+    margin-top: 14px;
+    padding-inline: 16px;
+    font-size: 14px;
+  }
+}
+
 .live-tab-pulse-badge {
   display: inline-flex;
   align-items: center;
@@ -7518,7 +7651,6 @@ body { transition: background 0.35s ease, color 0.35s ease; }
     align-items: flex-start;
   }
 }
-
 
 
 
