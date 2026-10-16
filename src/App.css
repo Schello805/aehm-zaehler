@@ -2330,6 +2330,28 @@ h2 {
   min-width: 220px;
 }
 
+:root[data-theme="dark"] .history-tools input,
+:root[data-theme="dark"] .history-tools select {
+  background: #24211d;
+  border-color: #4a463f;
+  color: var(--ink);
+  color-scheme: dark;
+}
+
+:root[data-theme="dark"] .history-tools input::placeholder {
+  color: #a9a196;
+  opacity: 1;
+}
+
+:root[data-theme="dark"] .history-tools input:hover,
+:root[data-theme="dark"] .history-tools select:hover,
+:root[data-theme="dark"] .history-tools input:focus,
+:root[data-theme="dark"] .history-tools select:focus {
+  background: #2b2823;
+  border-color: var(--red);
+  outline: none;
+}
+
 .history-table-wrap {
   overflow-x: auto;
 }
@@ -2440,6 +2462,10 @@ h2 {
   border: 1px dashed var(--line);
   color: var(--muted);
   background: rgba(255,255,255,0.3);
+}
+
+:root[data-theme="dark"] .history-empty-state {
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .history-table tbody tr {
