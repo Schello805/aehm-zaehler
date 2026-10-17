@@ -2768,6 +2768,50 @@ h2 {
   border: 1px solid var(--line);
 }
 
+:root[data-theme="dark"] .waveform-bar-card.sniper-card {
+  background: #1c1a17;
+  border-color: #3b3731;
+}
+
+:root[data-theme="dark"] .sniper-summary-tag {
+  background: #27241f;
+  border-color: #454038;
+}
+
+:root[data-theme="dark"] .sniper-filter-bar {
+  background: #211e1a;
+  border-color: #3b3731;
+}
+
+:root[data-theme="dark"] .sniper-filter-pill {
+  background: #2a2722;
+  border-color: #48433b;
+}
+
+:root[data-theme="dark"] .sniper-filter-pill:hover {
+  background: #35312b;
+  border-color: var(--ink-soft);
+}
+
+:root[data-theme="dark"] .waveform-timeline {
+  background: #25221e;
+  border-color: #48433b;
+}
+
+:root[data-theme="dark"] .timeline-track {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+:root[data-theme="dark"] .sniper-card .player-control-button,
+:root[data-theme="dark"] .sniper-card .keyboard-shortcut-hint kbd {
+  background: #2a2722;
+  border-color: #48433b;
+}
+
+:root[data-theme="dark"] .sniper-card .player-control-button:hover:not(:disabled) {
+  background: #35312b;
+}
+
 .waveform-timeline {
   position: relative;
   height: 36px;
