@@ -1185,14 +1185,20 @@ function App() {
       }).join('\n')
     }
 
-    const hasNoFillers = effectiveFillers === 0
+    const fillerRate = result.totalWords > 0
+      ? effectiveFillers / result.totalWords
+      : Number(result.relativeRate || 0)
+    const usePositiveFeedback = fillerRate < 0.01
+    const praiseText = effectiveFillers === 0
+      ? 'Richtig stark: In dieser Aufnahme wurden keine der geprüften Füllwörter erkannt. Der Sprechfluss ist klar, souverän und angenehm zu verfolgen – so kommen die Inhalte besonders gut zur Geltung!'
+      : `Richtig stark: Mit nur ${effectiveFillers} Füllwörtern liegt der Anteil unter 1 %. Der Sprechfluss ist klar, souverän und angenehm zu verfolgen – so kommen die Inhalte besonders gut zur Geltung!`
     const platformIntro = platform === 'youtube'
       ? 'Kommentar zu diesem Video:'
       : 'Mein Eindruck zu diesem Video:'
-    const commentText = hasNoFillers
+    const commentText = usePositiveFeedback
       ? `${platformIntro}
 
-Richtig stark: In dieser Aufnahme wurden keine der geprüften Füllwörter erkannt. Der Sprechfluss ist klar, souverän und angenehm zu verfolgen – so kommen die Inhalte besonders gut zur Geltung!
+${praiseText}
 
 ⏱️ Dauer: ${formatTimestamp(result.duration)} Min.
 🗣️ Wörter gesamt: ${result.totalWords.toLocaleString('de-DE')}
