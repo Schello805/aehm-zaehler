@@ -5,6 +5,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
+    "test": "node --test tests/*.test.mjs",
     "dev": "vite",
     "server": "node server.mjs",
     "dev:full": "concurrently \"npm run server\" \"npm run dev\"",
@@ -16,9 +17,11 @@
     "express": "^5.2.1",
     "express-rate-limit": "^8.7.0",
     "idb-keyval": "^6.3.0",
-    "multer": "^2.3.0",
+    "ipaddr.js": "^2.5.0",
+    "multer": "^2.5.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "undici": "^6.29.1",
     "youtube-dl-exec": "^3.1.15"
   },
   "devDependencies": {

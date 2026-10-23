@@ -5,11 +5,15 @@ import { create as createYoutubeDl } from 'youtube-dl-exec'
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile, stat } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
 import { tmpdir, setPriority } from 'node:os'
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
+import { lookup } from 'node:dns/promises'
+import { isIP } from 'node:net'
+import ipaddr from 'ipaddr.js'
+import { Agent } from 'undici'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { existsSync, mkdirSync, readFileSync, createWriteStream, createReadStream } from 'node:fs'
-import { Readable } from 'node:stream'
+import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
 // Global crash protection — keep server running under all circumstances
@@ -48,7 +52,9 @@ if (existsSync(envFile)) {
 }
 
 const app = express()
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 200 * 1024 * 1024 } })
+const maxMediaBytes = Number(process.env.MAX_MEDIA_BYTES || 2 * 1024 * 1024 * 1024)
+if (!Number.isSafeInteger(maxMediaBytes) || maxMediaBytes < 1) throw new Error('MAX_MEDIA_BYTES muss eine positive ganze Zahl sein.')
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } })
 const largeUploadDirectory = join(tmpdir(), 'aehmzaehler-uploads')
 mkdirSync(largeUploadDirectory, { recursive: true })
 const analyzeUpload = multer({
@@ -56,11 +62,60 @@ const analyzeUpload = multer({
     destination: largeUploadDirectory,
     filename: (_request, _file, callback) => callback(null, `${randomUUID()}.upload`),
   }),
-  limits: { fileSize: 20 * 1024 * 1024 * 1024 },
+  limits: { fileSize: maxMediaBytes },
 })
 const analysisJobsDirectory = process.env.ANALYSIS_JOBS_DIR || join(projectRoot, '.analysis-jobs')
 app.use(express.json())
 const port = process.env.PORT || 8787
+
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Zu viele Anfragen. Bitte versuche es in einigen Minuten erneut.' },
+})
+const processingLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Zu viele aufwendige Medienverarbeitungen. Bitte versuche es später erneut.' },
+})
+let activeMediaOperations = 0
+const withMediaSlot = (handler) => async (request, response) => {
+  if (activeMediaOperations >= 2) return response.status(503).json({ error: 'Die Medienverarbeitung ist ausgelastet. Bitte versuche es später erneut.' })
+  activeMediaOperations += 1
+  try {
+    return await handler(request, response)
+  } finally {
+    activeMediaOperations -= 1
+  }
+}
+const proxyLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Zu viele Audio-Proxy-Anfragen. Bitte versuche es später erneut.' },
+})
+const metadataLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Zu viele Medienprüfungen. Bitte versuche es später erneut.' },
+})
+app.use('/api', (request, response, next) => {
+  const cookie = request.headers.cookie?.match(/(?:^|;\s*)aehm_session=([a-f0-9]{64})(?:;|$)/)?.[1]
+  request.analysisOwner = cookie || randomUUID().replaceAll('-', '') + randomUUID().replaceAll('-', '')
+  if (!cookie) response.setHeader('Set-Cookie', `aehm_session=${request.analysisOwner}; HttpOnly; SameSite=Strict; Path=/api; Max-Age=604800${request.secure ? '; Secure' : ''}`)
+  response.setHeader('X-Content-Type-Options', 'nosniff')
+  response.setHeader('Referrer-Policy', 'no-referrer')
+  // Status polling runs every 800ms and must remain available during long jobs.
+  if (/^\/(analyze-status|analyze-result|audio-stream)\//.test(request.path)) return next()
+  return apiLimiter(request, response, next)
+})
 
 const getYtDlpPath = () => {
   if (process.env.YT_DLP_PATH && existsSync(process.env.YT_DLP_PATH)) return process.env.YT_DLP_PATH
@@ -119,29 +174,40 @@ const moveFileIntoWorkDirectory = async (sourcePath, destinationPath) => {
 }
 
 const commonYtDlpOptions = {
+  maxFilesize: maxMediaBytes,
   noPlaylist: true,
   quiet: true,
   extractorArgs: 'youtube:player_client=android,web',
   userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
 }
 
+const assertDownloaderUrl = (urlString) => {
+  const host = new URL(urlString).hostname.toLowerCase()
+  if (!['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtu.be'].includes(host)) {
+    throw new Error('Für diesen Anbieter bitte eine direkte Audiodatei oder einen Podcast-RSS-Link verwenden. Video-Downloads sind auf YouTube beschränkt.')
+  }
+}
+
+const isBlockedIpAddress = (address) => {
+  try {
+    return ipaddr.process(String(address).replace(/^\[|\]$/g, '')).range() !== 'unicast'
+  } catch {
+    return true
+  }
+}
+
 const isValidHttpUrl = (urlString) => {
   try {
     const parsed = new URL(urlString)
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false
-    const hostname = parsed.hostname.toLowerCase()
+    if (parsed.username || parsed.password || (parsed.port && !['80', '443'].includes(parsed.port))) return false
+    const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '')
     if (
       hostname === 'localhost' ||
-      hostname === '127.0.0.1' ||
-      hostname === '0.0.0.0' ||
-      hostname === '::1' ||
       hostname.endsWith('.local') ||
       hostname.endsWith('.internal') ||
       hostname.endsWith('.lan') ||
-      /^10\./.test(hostname) ||
-      /^192\.168\./.test(hostname) ||
-      /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname) ||
-      /^169\.254\./.test(hostname)
+      (isIP(hostname) && isBlockedIpAddress(hostname))
     ) {
       return false
     }
@@ -150,6 +216,62 @@ const isValidHttpUrl = (urlString) => {
     return false
   }
 }
+
+const assertSafeRemoteUrl = async (urlString) => {
+  if (!isValidHttpUrl(urlString)) throw new Error('Ungültige oder nicht erlaubte URL.')
+  const parsed = new URL(urlString)
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, '')
+  if (isIP(hostname)) return parsed
+
+  const addresses = await lookup(hostname, { all: true, verbatim: true })
+  if (!addresses.length || addresses.some(({ address }) => isBlockedIpAddress(address))) {
+    throw new Error('Die Zieladresse ist nicht erlaubt.')
+  }
+  return parsed
+}
+
+const fetchSafe = async (urlString, options = {}) => {
+  let currentUrl = String(urlString)
+  for (let redirects = 0; redirects <= 5; redirects += 1) {
+    await assertSafeRemoteUrl(currentUrl)
+    const response = await fetch(currentUrl, { ...options, signal: options.signal || AbortSignal.timeout(30000), dispatcher: safeDispatcher, redirect: 'manual' })
+    if (response.status < 300 || response.status >= 400) return response
+    const location = response.headers.get('location')
+    await response.body?.cancel()
+    if (!location) throw new Error('Ungültige Weiterleitung der Medienquelle.')
+    currentUrl = new URL(location, currentUrl).toString()
+  }
+  throw new Error('Zu viele Weiterleitungen der Medienquelle.')
+}
+
+const readMetadataText = async (response) => {
+  const chunks = []
+  let bytes = 0
+  for await (const chunk of response.body) {
+    bytes += chunk.byteLength
+    if (bytes > 2 * 1024 * 1024) throw new Error('Die Medienmetadaten sind zu groß.')
+    chunks.push(Buffer.from(chunk))
+  }
+  return Buffer.concat(chunks).toString('utf8')
+}
+
+// Validate the exact addresses used by the socket, preventing DNS rebinding
+// between an earlier validation and the actual HTTP connection.
+const safeDispatcher = new Agent({
+  connect: {
+    lookup(hostname, options, callback) {
+      lookup(hostname, { all: true, verbatim: true }).then((addresses) => {
+        if (!addresses.length || addresses.some(({ address }) => isBlockedIpAddress(address))) {
+          return callback(new Error('Die Zieladresse ist nicht erlaubt.'))
+        }
+        if (options.all) return callback(null, addresses)
+        const address = addresses.find((entry) => !options.family || entry.family === options.family)
+        if (!address) return callback(new Error('Keine passende öffentliche Zieladresse.'))
+        callback(null, address.address, address.family)
+      }, callback)
+    },
+  },
+})
 
 // Result Cache for lightning-fast repeat requests
 const analysisResultCache = new Map()
@@ -256,14 +378,14 @@ const resolveSpotifyPodcast = async (url) => {
 
     // Method 1: Try Spotify embed page (Next.js data)
     try {
-      const embedRes = await fetch(`https://open.spotify.com/embed/${type}/${epId}`, {
+      const embedRes = await fetchSafe(`https://open.spotify.com/embed/${type}/${epId}`, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         },
         signal: AbortSignal.timeout(8000)
       })
       if (embedRes.ok) {
-        const html = await embedRes.text()
+        const html = await readMetadataText(embedRes)
         const match = html.match(/<script id="__NEXT_DATA__"[^>]*>(.*?)<\/script>/s) || html.match(/{"props":[\s\S]*?"audioPreview"[\s\S]*?}/)
         if (match) {
           try {
@@ -289,14 +411,14 @@ const resolveSpotifyPodcast = async (url) => {
     // Method 2: Try Direct Page with Facebook Bot UA (Spotify returns rich OpenGraph tags for FB bot)
     if (!title || !showName) {
       try {
-        const fbRes = await fetch(`https://open.spotify.com/${type}/${epId}`, {
+        const fbRes = await fetchSafe(`https://open.spotify.com/${type}/${epId}`, {
           headers: {
             'User-Agent': 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)'
           },
           signal: AbortSignal.timeout(8000)
         })
         if (fbRes.ok) {
-          const html = await fbRes.text()
+          const html = await readMetadataText(fbRes)
           const ogTitle = html.match(/<meta property="og:title" content="([^"]+)"/i)?.[1]
           const ogDesc = html.match(/<meta property="og:description" content="([^"]+)"/i)?.[1]
           const ogImg = html.match(/<meta property="og:image" content="([^"]+)"/i)?.[1]
@@ -334,7 +456,7 @@ const resolveSpotifyPodcast = async (url) => {
       for (const query of searchQueries) {
         try {
           console.log('[spotify] Trying iTunes search for podcast:', query)
-          const itunesRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=podcast&limit=5`, {
+          const itunesRes = await fetchSafe(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=podcast&limit=5`, {
             signal: AbortSignal.timeout(8000)
           })
           if (itunesRes.ok) {
@@ -342,12 +464,12 @@ const resolveSpotifyPodcast = async (url) => {
             const feedUrl = data.results?.[0]?.feedUrl
             if (feedUrl) {
               console.log('[spotify] Found Podcast RSS:', feedUrl)
-              const rssRes = await fetch(feedUrl, {
+              const rssRes = await fetchSafe(feedUrl, {
                 headers: { 'User-Agent': 'Mozilla/5.0' },
                 signal: AbortSignal.timeout(12000)
               })
               if (rssRes.ok) {
-                const xml = await rssRes.text()
+                const xml = await readMetadataText(rssRes)
                 const items = xml.match(/<item[\s\S]*?<\/item>/gi) || []
 
                 const epNumMatch = title.match(/(?:#|Nr\.?|Ep\.?|Folge\s*)(\d+)/i)
@@ -407,9 +529,7 @@ const resolveSpotifyPodcast = async (url) => {
 }
 
 const getUrlMetadata = async (url) => {
-  if (!isValidHttpUrl(url)) {
-    throw new Error('Ungültige oder nicht erlaubte URL.')
-  }
+  await assertSafeRemoteUrl(url)
 
   let title = ''
   let uploader = ''
@@ -439,9 +559,9 @@ const getUrlMetadata = async (url) => {
   // 3. Podcast RSS Feed (.xml, .rss, /feed, /podcast)
   if (lowerUrl.includes('.rss') || lowerUrl.includes('.xml') || lowerUrl.includes('/feed') || lowerUrl.includes('podcast')) {
     try {
-      const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(5000) })
+      const res = await fetchSafe(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(5000) })
       if (res.ok) {
-        const text = await res.text()
+        const text = await readMetadataText(res)
         if (text.includes('<rss') || text.includes('<channel')) {
           const podcastInfo = parsePodcastRss(text)
           if (podcastInfo && podcastInfo.audioUrl) {
@@ -463,7 +583,7 @@ const getUrlMetadata = async (url) => {
   // 4. Fast oEmbed for YouTube
   if (/(?:youtu\.be\/|youtube\.com\/)/i.test(url)) {
     try {
-      const oeRes = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`)
+      const oeRes = await fetchSafe(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`)
       if (oeRes.ok) {
         const oeData = await oeRes.json()
         if (oeData?.title) {
@@ -478,6 +598,7 @@ const getUrlMetadata = async (url) => {
   }
 
   try {
+    assertDownloaderUrl(url)
     const metadata = await youtubedl(url, {
       ...commonYtDlpOptions,
       dumpSingleJson: true,
@@ -724,11 +845,11 @@ const performSpeakerDiarization = (rawSegments, words) => {
   return { segments: enrichedSegments, speakers }
 }
 
-app.post('/api/media-info', async (request, response) => {
+app.post('/api/media-info', metadataLimiter, async (request, response) => {
   try {
     const url = String(request.body.url || '').trim()
     if (!url) return response.status(400).json({ error: 'Kein Medienlink angegeben.' })
-    if (!isValidHttpUrl(url)) return response.status(400).json({ error: 'Ungültige oder nicht erlaubte URL.' })
+    await assertSafeRemoteUrl(url)
 
     const info = await getUrlMetadata(url)
     if (!info.duration && !info.title) {
@@ -820,6 +941,7 @@ app.get('/api/analyze-status/:id', (request, response) => {
 
   const id = request.params.id
   const job = activeJobs.get(id)
+  if (job && job.owner !== request.analysisOwner) return response.status(404).json({ error: 'Auftrag nicht gefunden.' })
   if (!job) {
     console.log(`[analyze-status] Job ${id} noch nicht in activeJobs -> initializing`)
     return response.json({
@@ -839,13 +961,14 @@ app.get('/api/analyze-status/:id', (request, response) => {
     console.log(`[analyze-status] ${id} -> status=${job.status}, percent=${job.percent}%, currentTime=${job.currentTime || 0}s/${job.duration || 0}s, segments=${job.segments?.length || 0}`)
   }
 
-  const { childProcess: _unused, result, ...safeJob } = job
+  const { childProcess: _unused, result, owner: _owner, audioPath: _audioPath, ...safeJob } = job
   return response.json({ ...safeJob, hasResult: Boolean(result) })
 })
 
 app.get('/api/analyze-result/:id', (request, response) => {
   response.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
   const job = activeJobs.get(request.params.id)
+  if (job && job.owner !== request.analysisOwner) return response.status(404).json({ error: 'Auftrag nicht gefunden.' })
   if (!job || job.status !== 'complete' || !job.result) {
     return response.status(404).json({ error: 'Das Analyseergebnis ist noch nicht verfügbar.' })
   }
@@ -856,6 +979,7 @@ app.get('/api/audio-stream/:id', async (request, response) => {
   try {
     const id = request.params.id
     const job = activeJobs.get(id)
+    if (job && job.owner !== request.analysisOwner) return response.status(404).json({ error: 'Auftrag nicht gefunden.' })
     if (!job || !job.audioPath || !existsSync(job.audioPath)) {
       return response.status(404).json({ error: 'Audiodatei nicht gefunden.' })
     }
@@ -893,10 +1017,10 @@ app.get('/api/audio-stream/:id', async (request, response) => {
   }
 })
 
-app.get('/api/proxy-audio', async (request, response) => {
+app.get('/api/proxy-audio', proxyLimiter, async (request, response) => {
   try {
     const targetUrl = request.query.url
-    if (!targetUrl || !isValidHttpUrl(targetUrl)) {
+    if (!targetUrl) {
       return response.status(400).json({ error: 'Ungültige URL.' })
     }
 
@@ -908,9 +1032,8 @@ app.get('/api/proxy-audio', async (request, response) => {
       fetchHeaders['Range'] = range
     }
 
-    const remoteRes = await fetch(targetUrl, {
+    const remoteRes = await fetchSafe(targetUrl, {
       headers: fetchHeaders,
-      redirect: 'follow',
     })
 
     if (!remoteRes.ok && remoteRes.status !== 206) {
@@ -952,10 +1075,11 @@ const killProcessTree = (child) => {
   } catch {}
 }
 
-app.post('/api/analyze-cancel/:id', (request, response) => {
+app.post('/api/analyze-cancel/:id', async (request, response) => {
   const id = request.params.id
   console.log('[analyze] Cancel requested for job:', id)
   const job = activeJobs.get(id)
+  if (job && job.owner !== request.analysisOwner) return response.status(404).json({ error: 'Auftrag nicht gefunden.' })
   if (job) {
     job.status = 'aborted'
     if (job.childProcess) {
@@ -967,7 +1091,10 @@ app.post('/api/analyze-cancel/:id', (request, response) => {
   const queueIdx = analysisQueue.findIndex((q) => q.jobId === id)
   if (queueIdx !== -1) {
     const [removed] = analysisQueue.splice(queueIdx, 1)
-    if (removed) removed.isAborted = true
+    if (removed) {
+      removed.isAborted = true
+      await removed.cleanup?.()
+    }
     notifyQueuePositions()
   }
   return response.json({ ok: true })
@@ -985,7 +1112,7 @@ app.post('/api/analyze', analyzeLimiter, (request, response, next) => {
   analyzeUpload.single('file')(request, response, (error) => {
     if (!error) return next()
     const message = error.code === 'LIMIT_FILE_SIZE'
-      ? 'Die Datei ist größer als das Upload-Limit von 20 GB.'
+      ? `Die Datei ist größer als das Upload-Limit von ${Math.round(maxMediaBytes / 1024 / 1024)} MB.`
       : `Datei-Upload fehlgeschlagen: ${error.message}`
     return response.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ error: message })
   })
@@ -999,9 +1126,17 @@ app.post('/api/analyze', analyzeLimiter, (request, response, next) => {
   let jobWorkDirectory = null
   const uploadedFilePath = request.file?.path || null
 
-  const jobId = String(request.body.jobId || `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`)
+  const requestedJobId = String(request.body.jobId || '')
+  const jobId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestedJobId)
+    ? requestedJobId
+    : randomUUID()
+  if (activeJobs.has(jobId) || analysisQueue.length >= 10) {
+    if (uploadedFilePath) await rm(uploadedFilePath, { force: true })
+    return response.status(409).json({ error: 'Auftrag bereits vorhanden oder Warteschlange voll.' })
+  }
   const jobState = {
     id: jobId,
+    owner: request.analysisOwner,
     status: 'running',
     stage: 'download',
     message: 'Initialisiere Analyse...',
@@ -1094,9 +1229,7 @@ app.post('/api/analyze', analyzeLimiter, (request, response, next) => {
     isSlotAcquired = true
     try {
       console.log('[analyze] Starting job execution for:', jobId)
-      if (request.body.url && !isValidHttpUrl(request.body.url)) {
-        throw new Error('Ungültige oder nicht erlaubte Medien-URL.')
-      }
+      if (request.body.url) await assertSafeRemoteUrl(request.body.url)
 
       const words = JSON.parse(request.body.words || '[]').map((word) => word.trim().toLowerCase()).filter(Boolean)
       console.log('[analyze] Words to search:', words)
@@ -1105,6 +1238,8 @@ app.post('/api/analyze', analyzeLimiter, (request, response, next) => {
       if (request.body.url) {
         const cached = getFromCache(request.body.url, words)
         if (cached) {
+          const cachedAudioPath = join(analysisJobsDirectory, await getAnalysisWorkKey(request, words), 'prepared-audio.mp3')
+          if (existsSync(cachedAudioPath)) jobState.audioPath = cachedAudioPath
           console.log('[analyze] ⚡ Cache HIT for URL:', request.body.url)
           sendEvent({ type: 'status', stage: 'download', message: '⚡ Blitzschnell aus Cache geladen...' })
           sendEvent({
@@ -1122,7 +1257,7 @@ app.post('/api/analyze', analyzeLimiter, (request, response, next) => {
           })
           sendEvent({
             type: 'complete',
-            result: cached,
+            result: { ...cached, audioUrl: cached.directAudioUrl || (jobState.audioPath ? `/api/audio-stream/${jobId}` : '') },
           })
           return response.end()
         }
@@ -1174,14 +1309,19 @@ app.post('/api/analyze', analyzeLimiter, (request, response, next) => {
         if (metadataInfo?.directAudioUrl) {
           console.log('[analyze] Direct audio/podcast stream detected:', metadataInfo.directAudioUrl)
           sendEvent({ type: 'status', stage: 'download', message: `Lade Audio „${mediaTitle || 'Podcast'}“ direkt...` })
-          const audioRes = await fetch(metadataInfo.directAudioUrl, {
+          const audioRes = await fetchSafe(metadataInfo.directAudioUrl, {
             headers: { 'User-Agent': 'Mozilla/5.0' },
             signal: AbortSignal.timeout(12 * 60 * 60 * 1000),
           })
           if (!audioRes.ok) throw new Error(`Audio-Download fehlgeschlagen (HTTP ${audioRes.status})`)
           rawFilePath = join(temporaryDirectory, 'direct-audio.mp3')
           const writeStream = createWriteStream(rawFilePath)
-          await pipeline(Readable.fromWeb(audioRes.body), writeStream)
+          let downloadedBytes = 0
+          const sizeLimit = new Transform({ transform(chunk, _encoding, callback) {
+            downloadedBytes += chunk.length
+            callback(downloadedBytes > maxMediaBytes ? new Error('Die Mediendatei überschreitet das Größenlimit.') : null, chunk)
+          } })
+          await pipeline(Readable.fromWeb(audioRes.body), sizeLimit, writeStream)
           const audioStats = await stat(rawFilePath)
           console.log('[analyze] Direct audio downloaded to disk, size:', audioStats.size)
           file = { path: rawFilePath, originalname: `${mediaTitle || 'audio'}.mp3`, mimetype: 'audio/mpeg', size: audioStats.size }
@@ -1207,6 +1347,7 @@ app.post('/api/analyze', analyzeLimiter, (request, response, next) => {
               throw new Error('Spotify-DRM: Die Spotify-Folge konnte nicht über offene Podcast-Quellen heruntergeladen werden. Bitte lade die Audiodatei direkt als MP3/M4A hoch.')
             }
           } else {
+            assertDownloaderUrl(request.body.url)
             try {
               await youtubedl(request.body.url, {
                 ...commonYtDlpOptions,
@@ -1251,7 +1392,7 @@ app.post('/api/analyze', analyzeLimiter, (request, response, next) => {
         console.log('[analyze] Converting & optimizing audio for Whisper KI from:', sourceMediaPath)
         sendEvent({ type: 'status', stage: 'converting', message: 'Optimiere Audio für Whisper KI...' })
         await runCommand('ffmpeg', [
-          '-nostdin', '-hide_banner', '-loglevel', 'error', '-y', '-i', sourceMediaPath,
+          '-nostdin', '-hide_banner', '-loglevel', 'error', '-protocol_whitelist', 'file,pipe', '-y', '-i', sourceMediaPath,
           '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000', '-b:a', '48k', workingAudioPath,
         ], { timeout: 12 * 60 * 60 * 1000, maxBuffer: 8 * 1024 * 1024 })
         const preparedStats = await stat(workingAudioPath)
@@ -1567,7 +1708,11 @@ app.post('/api/analyze', analyzeLimiter, (request, response, next) => {
     const queuePosition = analysisQueue.length + 1
     jobState.stage = 'queue'
     jobState.queuePosition = queuePosition
-    analysisQueue.push({ jobId, isAborted: false, sendEvent, start: runAnalysis })
+    analysisQueue.push({ jobId, isAborted: false, sendEvent, start: runAnalysis, cleanup: async () => {
+      if (heartbeat) clearInterval(heartbeat)
+      if (uploadedFilePath) await rm(uploadedFilePath, { force: true })
+      response.end()
+    } })
     sendEvent({
       type: 'queue',
       queuePosition,
@@ -1580,23 +1725,24 @@ app.post('/api/analyze', analyzeLimiter, (request, response, next) => {
   }
 })
 
-app.post('/api/clean-audio', upload.single('file'), async (request, response) => {
+app.post('/api/clean-audio', processingLimiter, upload.single('file'), withMediaSlot(async (request, response) => {
   let temporaryDirectory
   try {
-    if (request.body.url && !isValidHttpUrl(request.body.url)) {
-      return response.status(400).json({ error: 'Ungültige oder nicht erlaubte URL.' })
-    }
+    if (request.body.url) await assertSafeRemoteUrl(request.body.url)
     temporaryDirectory = await mkdtemp(join(tmpdir(), 'aehmclean-'))
     let file = request.file
     if (!file && request.body.url) {
+      assertDownloaderUrl(request.body.url)
       const output = join(temporaryDirectory, 'audio.%(ext)s')
       await youtubedl(request.body.url, {
         ...commonYtDlpOptions,
+        maxFilesize: 50 * 1024 * 1024,
         extractAudio: true,
         audioFormat: 'mp3',
         output,
       }, { timeout: 10 * 60 * 1000 })
       const downloadedFile = join(temporaryDirectory, 'audio.mp3')
+      if ((await stat(downloadedFile)).size > 50 * 1024 * 1024) throw new Error('Audio-Bereinigung unterstützt höchstens 50 MB.')
       file = { buffer: await readFile(downloadedFile), originalname: 'linked-media.mp3', mimetype: 'audio/mpeg' }
     }
     if (!file) return response.status(400).json({ error: 'Bitte eine Datei oder einen Link angeben.' })
@@ -1682,22 +1828,22 @@ app.post('/api/clean-audio', upload.single('file'), async (request, response) =>
     const filterComplex = filterParts.join('; ')
 
     const outputPath = join(temporaryDirectory, 'cleaned.mp3')
-    await runCommand('ffmpeg', ['-y', '-i', inputPath, '-filter_complex', filterComplex, '-map', '[outa]', '-b:a', '128k', outputPath], { timeout: 10 * 60 * 1000 })
+    await runCommand('ffmpeg', ['-protocol_whitelist', 'file,pipe', '-y', '-i', inputPath, '-filter_complex', filterComplex, '-map', '[outa]', '-b:a', '128k', outputPath], { timeout: 10 * 60 * 1000 })
 
-    const cleanedBuffer = await readFile(outputPath)
     response.setHeader('Content-Type', 'audio/mpeg')
     response.setHeader('Content-Disposition', 'attachment; filename="audio-bereinigt.mp3"')
-    return response.send(cleanedBuffer)
+    await pipeline(createReadStream(outputPath), response)
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Audio-Bereinigung fehlgeschlagen.'
     console.error('Audio-Bereinigung fehlgeschlagen:', message)
+    if (response.headersSent || response.destroyed) return
     return response.status(500).json({ error: message })
   } finally {
     if (typeof temporaryDirectory === 'string') await rm(temporaryDirectory, { recursive: true, force: true })
   }
-})
+}))
 
-app.post('/api/convert-to-mp3', upload.single('file'), async (request, response) => {
+app.post('/api/convert-to-mp3', processingLimiter, upload.single('file'), withMediaSlot(async (request, response) => {
   let temporaryDirectory
   try {
     if (!request.file) {
@@ -1709,23 +1855,23 @@ app.post('/api/convert-to-mp3', upload.single('file'), async (request, response)
     const outputPath = join(temporaryDirectory, 'output.mp3')
 
     await writeFile(inputPath, request.file.buffer)
-    await runCommand('ffmpeg', ['-y', '-i', inputPath, '-vn', '-acodec', 'libmp3lame', '-b:a', '192k', outputPath], { timeout: 60 * 1000 })
+    await runCommand('ffmpeg', ['-protocol_whitelist', 'file,pipe', '-y', '-i', inputPath, '-vn', '-acodec', 'libmp3lame', '-b:a', '192k', outputPath], { timeout: 60 * 1000 })
 
-    const mp3Buffer = await readFile(outputPath)
     response.setHeader('Content-Type', 'audio/mpeg')
     response.setHeader('Content-Disposition', 'attachment; filename="live-session.mp3"')
-    return response.send(mp3Buffer)
+    await pipeline(createReadStream(outputPath), response)
   } catch (err) {
     console.error('[convert-to-mp3] Error:', err)
+    if (response.headersSent || response.destroyed) return
     return response.status(500).json({ error: 'MP3-Konvertierung fehlgeschlagen: ' + (err.message || String(err)) })
   } finally {
     if (temporaryDirectory) {
       try { await rm(temporaryDirectory, { recursive: true, force: true }) } catch {}
     }
   }
-})
+}))
 
-app.post('/api/transcribe-live', upload.single('file'), async (request, response) => {
+app.post('/api/transcribe-live', processingLimiter, upload.single('file'), withMediaSlot(async (request, response) => {
   let temporaryDirectory
   try {
     if (!request.file) {
@@ -1740,7 +1886,7 @@ app.post('/api/transcribe-live', upload.single('file'), async (request, response
     const workingAudioPath = join(temporaryDirectory, 'prepared-audio.mp3')
 
     await writeFile(inputPath, request.file.buffer)
-    await runCommand('ffmpeg', ['-y', '-i', inputPath, '-vn', '-ac', '1', '-ar', '16000', '-b:a', '48k', workingAudioPath], { timeout: 60 * 1000 })
+    await runCommand('ffmpeg', ['-protocol_whitelist', 'file,pipe', '-y', '-i', inputPath, '-vn', '-ac', '1', '-ar', '16000', '-b:a', '48k', workingAudioPath], { timeout: 60 * 1000 })
 
     const pythonPath = getPythonPath()
     const scriptPath = getTranscriptionScript()
@@ -1818,17 +1964,13 @@ app.post('/api/transcribe-live', upload.single('file'), async (request, response
       try { await rm(temporaryDirectory, { recursive: true, force: true }) } catch {}
     }
   }
-})
+}))
 
 // In-memory failed deletion attempts per IP: ip -> { count: number, lockedUntil: number | null, lastAttempt: number }
 const deleteAttemptsByIp = new Map()
 
 const getClientIp = (req) => {
-  const forwarded = req.headers['x-forwarded-for']
-  if (typeof forwarded === 'string' && forwarded.trim()) {
-    return forwarded.split(',')[0].trim()
-  }
-  return req.socket?.remoteAddress || req.ip || '127.0.0.1'
+  return req.ip || req.socket?.remoteAddress || '127.0.0.1'
 }
 
 // Clean up old IP rate-limit records periodically
@@ -1844,6 +1986,11 @@ setInterval(() => {
 }, 5 * 60 * 1000)
 
 const handleVerifyDeletePassword = (request, response) => {
+  const expectedPassword = process.env.ADMIN_DELETE_PASSWORD
+  if (!expectedPassword) {
+    return response.status(503).json({ error: 'Die Admin-Passwortprüfung ist nicht konfiguriert.' })
+  }
+
   const ip = getClientIp(request)
   const now = Date.now()
   let record = deleteAttemptsByIp.get(ip)
@@ -1870,10 +2017,13 @@ const handleVerifyDeletePassword = (request, response) => {
   }
 
   const { password } = request.body || {}
-  const rawPassword = String(password || '').trim()
-  const expectedPassword = String(process.env.ADMIN_DELETE_PASSWORD || 'Secure1!').trim()
+  const rawPassword = String(password || '')
+  const expectedPasswordBuffer = Buffer.from(expectedPassword, 'utf8')
+  const rawPasswordBuffer = Buffer.from(rawPassword, 'utf8')
+  const passwordMatches = rawPasswordBuffer.length === expectedPasswordBuffer.length &&
+    timingSafeEqual(rawPasswordBuffer, expectedPasswordBuffer)
 
-  if (!rawPassword || rawPassword !== expectedPassword) {
+  if (!rawPassword || !passwordMatches) {
     record.count += 1
     record.lastAttempt = now
 

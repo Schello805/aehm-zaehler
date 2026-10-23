@@ -1878,7 +1878,22 @@ ${advice.summary}
       remainingSeconds: initialRemaining,
     })
 
-    const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    // Establish the session before a slow upload: status polling may start
+    // while the upload request has not returned its response headers yet.
+    try {
+      const sessionResponse = await fetch('/api/health', { signal: controller.signal })
+      if (!sessionResponse.ok) throw new Error('Die Analysesitzung konnte nicht gestartet werden.')
+    } catch (sessionError) {
+      setError(sessionError instanceof Error ? sessionError.message : 'Der Server ist nicht erreichbar.')
+      setIsAnalyzing(false)
+      return
+    }
+
+    // getRandomValues also works on self-hosted HTTP/LAN installations.
+    const randomBytes = crypto.getRandomValues(new Uint8Array(16))
+    randomBytes[6] = (randomBytes[6] & 0x0f) | 0x40
+    randomBytes[8] = (randomBytes[8] & 0x3f) | 0x80
+    const jobId = Array.from(randomBytes, (byte) => byte.toString(16).padStart(2, '0')).join('').replace(/^(\w{8})(\w{4})(\w{4})(\w{4})(\w{12})$/, '$1-$2-$3-$4-$5')
     currentJobIdRef.current = jobId
     liveSegmentsRef.current = []
     console.log('[Analyze] Starting analysis with jobId:', jobId, { file: file?.name, url: targetUrl, words })
